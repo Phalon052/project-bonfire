@@ -1,0 +1,60 @@
+# ── Project Bonfire ──────────────────────────────────────────
+# Keep only the top-level files in these folders (guides, templates,
+# generated views); ignore every subfolder inside them.
+catalog/model library/*/
+catalog/hardware inventory/*/
+
+# To track the CSV data after all, uncomment:
+# !catalog/model library/data/
+# !catalog/hardware inventory/data/
+
+# Blender backups and autosaves
+*.blend1
+*.blend2
+*.blend@
+*.autosave.blend
+quit.blend
+
+# Sliced print files
+*.gcode
+*.gcode.3mf
+
+# Secrets / local config
+.env
+.env.*
+*.key
+tools/bambu_config.local.json
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Editors ──────────────────────────────────────────────────
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# ── OS ───────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# ── Office lock files (CSV open in Excel) ────────────────────
+~$*
+.~lock.*#
+
+# ── Misc ─────────────────────────────────────────────────────
+TODO.md
+BAMBU_MCP_PLAN.md
+# Generated views of personal data
+catalog/model library/projects.md
+catalog/hardware inventory/inventory_count.md
