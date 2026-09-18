@@ -1,0 +1,28 @@
+# Project Bonfire — line endings and binary files
+#
+# Without this, the rules come from whatever core.autocrlf each clone happens to
+# have set. Stated here, they are the same for everyone.
+
+# Text files: stored LF in the repo, checked out in the platform's own endings.
+* text=auto
+
+# Never touched. Git "fixing" line endings inside a mesh or a .blend corrupts it.
+*.blend  binary
+*.blend1 binary
+*.stl    binary
+*.3mf    binary
+*.gcode  binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.webp   binary
+*.woff2  binary
+*.pdf    binary
+*.xlsx   binary
+
+# Text, but worth being explicit about: these are read by tools, not just people.
+*.py     text
+*.md     text
+*.json   text
+*.csv    text
+*.svg    text

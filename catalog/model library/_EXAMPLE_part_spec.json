@@ -1,0 +1,133 @@
+{
+  "spec_version": 1,
+  "part": "example_bracket",
+  "units": "mm",
+  "datum": "center",
+  "constants": {
+    "slide": 0.2,
+    "wall": 4.0
+  },
+  "outline": {
+    "type": "rect",
+    "width": 120.0,
+    "length": 60.0,
+    "corner_radius": 4.0,
+    "source": "stated"
+  },
+  "thickness": 8.0,
+  "thickness_source": "stated",
+  "companions": {
+    "slide_key": {
+      "outline": {
+        "type": "rect",
+        "width": 12.0,
+        "length": 50.0
+      },
+      "thickness": 4.0
+    }
+  },
+  "features": [
+    {
+      "id": "pilot_hole",
+      "type": "hole",
+      "x": -44.0,
+      "y": 0.0,
+      "diameter": 5.2,
+      "depth": "through",
+      "source": "stated",
+      "note": "clearance for an M5"
+    },
+    {
+      "id": "cable_slot",
+      "type": "slot",
+      "x": 0.0,
+      "y": 0.0,
+      "width": 8.0,
+      "length": 34.0,
+      "depth": "through",
+      "source": "stated"
+    },
+    {
+      "id": "keeper_hole",
+      "type": "hole",
+      "x": "=cable_slot.x + cable_slot.width/2 + wall",
+      "y": 22.0,
+      "diameter": 3.3,
+      "depth": "unknown",
+      "source": "derived; depth open until the screw is measured"
+    },
+    {
+      "id": "magnet_pocket",
+      "type": "pocket",
+      "x": -44.0,
+      "y": -20.0,
+      "width": 20.0,
+      "length": 12.0,
+      "depth": 3.0,
+      "from": "bottom",
+      "source": "measured"
+    },
+    {
+      "id": "key_channel",
+      "type": "pocket",
+      "x": 40.0,
+      "y": 0.0,
+      "width": "=companions.slide_key.outline.width + 2*slide",
+      "length": "=companions.slide_key.outline.length",
+      "depth": "=companions.slide_key.thickness",
+      "from": "bottom",
+      "source": "derived from the key plus the slide clearance"
+    },
+    {
+      "id": "locator_boss",
+      "type": "boss",
+      "x": -12.0,
+      "y": 24.0,
+      "diameter": 6.0,
+      "depth": 2.0,
+      "source": "stated"
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q-A",
+      "about": "cable_slot",
+      "sets": "cable_slot.x",
+      "text": "the slot is drawn on the centreline; is it centred, or offset toward the pilot hole? A caliper from the left edge to its near edge settles it."
+    },
+    {
+      "id": "Q-B",
+      "about": "keeper_hole",
+      "sets": "keeper_hole.depth",
+      "text": "how deep does the keeper screw need to go? drawn full depth until then."
+    }
+  ],
+  "details": [
+    {
+      "about": "cable_slot",
+      "title": "A",
+      "from_edge": "left",
+      "text": "left edge of the plate to the near edge of the slot - the reading Q-A needs."
+    }
+  ],
+  "mates": [
+    {
+      "id": "key_in_channel",
+      "hole": "key_channel.width",
+      "shaft": "companions.slide_key.outline.width",
+      "fit": "slide",
+      "per_side": 0.2
+    }
+  ],
+  "_how_to_use": [
+    "A worked example of every block the schema supports. Copy the shape, not the numbers.",
+    "constants: named values (a clearance rule, a wall thickness) referred to by expressions.",
+    "Any numeric field may be an expression: \"=cable_slot.x + cable_slot.width/2 + wall\".",
+    "  Arithmetic only, over names that exist. A correction then lands in one place and the",
+    "  features derived from it follow - see tools/sketch.py -> answer().",
+    "companions: another part this one mates with; mates: the fit, checked as arithmetic.",
+    "questions: each carries an id and 'sets', the field its answer writes.",
+    "details: a zoomed panel, for a question about a feature too small to see at sheet scale.",
+    "Run: python tools/sketch.py --example  to see the audit, coverage, mates and markdown."
+  ]
+}

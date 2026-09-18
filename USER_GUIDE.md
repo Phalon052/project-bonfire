@@ -4,8 +4,14 @@ How to use Project Bonfire day to day. It's a cheat sheet for people; the projec
 
 ## Before starting
 
-- **Blender** open, with the MCP add-on server running.
+- **Blender** open. The MCP add-on server starts by itself a second after Blender does
+  (Preferences → Add-ons → MCP → *Auto Start*, on by default). If it ever doesn't, that
+  panel has a **Start MCP Bridge Server** button, and *Online access* must be on in
+  Preferences → System.
 - **Cowork project** folder attached: `Desktop/Project Bonfire` (the catalog is inside it).
+- **First time on a PC:** copy `.env.example` to `.env`, fill in the paths for that
+  machine, then run `tools/env.py` → `apply_command()` and do what it prints (it puts
+  `BLENDER_PATH` in the user environment so Blender also works with its window closed).
 - **From a phone:** *not available yet (Dispatch is still rolling out).* Once it is, use Dispatch and name the project ("In Project Bonfire, …"). The PC must be awake with the Claude desktop app open. Approval prompts time out after 10 minutes.
 
 ## Commands
@@ -23,7 +29,7 @@ Account-wide slash commands (skills). Type `/bf-` to see them. They run right aw
 | `/bf-find <words>` | Searches the inventory, e.g. `/bf-find m4 socket` or `/bf-find low` |
 | `/bf-cleanup [project]` | Deletes all but the newest STL of each part (every project, or just one). Permanent |
 
-- The commands find this folder by themselves (connected folder, Desktop, or OneDrive Desktop). If it ever moves somewhere else, set a Windows environment variable `BONFIRE_HOME` to its path.
+- The commands find this folder by themselves (connected folder, Desktop, or OneDrive Desktop). If it ever moves somewhere else, set `BONFIRE_HOME` to its path in `.env` (and in the Windows user environment, via `tools/env.py` → `apply_command()`).
 - They work best with Blender open (MCP server running). Without it, the inventory commands still work through a copy that's synced back; `/bf-cleanup` needs Blender to delete files.
 - **Photos work:** send `/bf-add` or `/bf-restock` with a picture of the package, bin label, or Lowe's part number. The quantity comes from the message, or from the package count.
 - `<project>` can be part of the name, e.g. `/bf-done shelf bracket`.

@@ -19,6 +19,8 @@ Run inside Blender (via the Blender MCP) or any Python 3:
     bp["resolve_project"]("shelf bracket")                # folder name from a full or partial name
     bp["cleanup_exports"]()                               # delete all but the newest STL of each part
     bp["cleanup_exports"]("tolerance", dry_run=True)      # preview for one project
+    bp["cleanup_references"]()                            # drop old sketches/renders, keep the newest
+    bp["cleanup_references"](keep=2, dry_run=True)        # preview, keeping the newest two
 
 Project index (fast lookup, one row per project folder):
     catalog/model library/data/projects.csv
@@ -266,6 +268,64 @@ def cleanup_exports(project=None, ext="stl", dry_run=False):
     if total and not dry_run:
         index_projects()
     head = f"Cleanup{' (preview)' if dry_run else ''}: {total} old .{ext} file{'s' if total != 1 else ''}"
+    return "\n".join([head] + (out or ["  nothing to delete"]))
+
+
+def cleanup_references(project=None, keep=1, dry_run=False, exts=("png", "svg", "jpg", "jpeg")):
+    """
+    Delete old generated files in references/, keeping the newest `keep` of each
+    series (`<description>_<n>.<ext>`, as `next_reference_path` names them).
+
+    These are Claude's outputs - sketches, renders, marked-up question images.
+    They are reproducible from `part_spec.json` and `specifications.md`, which is
+    why they can be thrown away; they are also the biggest thing in the project
+    by disk (a marked-up photo runs to several MB, a generated sketch to ~10 KB).
+
+    Never touches: `references/drawings_images/` (the user's own photos and
+    drawings, which are evidence and cannot be regenerated), `specifications.md`,
+    `part_spec.json`, or any file that does not end in `_<n>.<ext>`.
+
+    project: folder name or part of it; None = every project in model library.
+    dry_run=True only lists what would go. Returns a short report.
+    """
+    if project:
+        folder, hits = resolve_project(project)
+        if folder is None:
+            return (f"Reference cleanup: '{project}' matches {len(hits)} projects: " + ", ".join(hits)
+                    if hits else f"Reference cleanup: no project matches '{project}'")
+        folders = [folder]
+    else:
+        folders = sorted(d for d in (os.listdir(LIBRARY) if os.path.isdir(LIBRARY) else [])
+                         if os.path.isdir(os.path.join(LIBRARY, d)) and d != "data")
+    keep = max(1, int(keep))
+    pattern = r"^(.*)_(\d+)\.(%s)$" % "|".join(re.escape(e.lower().lstrip(".")) for e in exts)
+    out, total, freed = [], 0, 0
+    for f in folders:
+        d = os.path.join(LIBRARY, f, "references")
+        if not os.path.isdir(d):
+            continue
+        series = {}
+        for name in os.listdir(d):
+            if not os.path.isfile(os.path.join(d, name)):
+                continue                                  # drawings_images/ and any other folder
+            m = re.match(pattern, name, re.I)
+            if m:
+                series.setdefault((m.group(1), m.group(3).lower()), []).append((int(m.group(2)), name))
+        old = sorted(name for vs in series.values() for n, name in sorted(vs)[:-keep])
+        if not old:
+            continue
+        for name in old:
+            path = os.path.join(d, name)
+            freed += os.path.getsize(path)
+            if not dry_run:
+                os.remove(path)
+        total += len(old)
+        kept = sorted(name for vs in series.values() for n, name in sorted(vs)[-keep:])
+        out.append(f"  {f}: {'would delete' if dry_run else 'deleted'} {len(old)} "
+                   f"({', '.join(old)}); kept {', '.join(kept)}")
+    head = (f"Reference cleanup{' (preview)' if dry_run else ''}: {total} file"
+            f"{'s' if total != 1 else ''}, {freed / 1048576.0:.1f} MB"
+            f"{'' if dry_run else ' freed'}; keeping the newest {keep} of each")
     return "\n".join([head] + (out or ["  nothing to delete"]))
 
 

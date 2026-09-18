@@ -29,7 +29,8 @@ A Claude (Cowork) workspace for designing 3D-printable parts in **Blender** and 
 | `01`–`04_*.md` | Standing rules: Blender, drawings, materials and fit clearances, Bambu printing |
 | `catalog/model library/` | One folder per project (`blend/`, `stl/`, `3mf/`, `references/`) |
 | `catalog/hardware inventory/` | Hardware on hand, reservations and shopping list |
-| `tools/` | `paths.py` (folders and file names), `inventory.py` (hardware counts) |
+| `tools/` | `paths.py` (folders and file names), `inventory.py` (hardware counts), `env.py` (machine-local settings) |
+| `.env.example` | Template for `.env`: where this folder and Blender live on your machine. `.env` itself is gitignored |
 | `plugins/` | Notes on the Blender add-ons used (BoltFactory, Extra Mesh Objects) |
 
 ## Quick examples

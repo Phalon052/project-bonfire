@@ -22,6 +22,11 @@ quit.blend
 # Secrets / local config
 .env
 .env.*
+!.env.example
+# The desktop app mirrors anything Claude writes to its outputs folder into
+# here, with the leading dot stripped - so a copy of .env lands as `env`.
+Claude outputs*/
+env
 *.key
 tools/bambu_config.local.json
 

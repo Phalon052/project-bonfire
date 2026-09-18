@@ -52,9 +52,17 @@ Relative to the view above:
 - **Ask with a picture, always.** Never describe a region in words alone.
   - A reference photo or drawing exists → draw a labelled box on it around the region in question.
   - A model exists → render it from the same view as the reference and draw the box on that.
+  - No model yet, or the question is about the *structure* rather than a region of the photo →
+    write the part spec (`references/part_spec.json`, template in `catalog/model library/`) and
+    generate the three views with `tools/sketch.py`, one `questions` entry per open question. The
+    drawing is then the statement of the structure believed correct — a wrong reading shows up
+    before any geometry exists, and redrawing after a correction costs one call. Run
+    `sketch.py` → `audit(spec)` first: it lists every number and flags features off the part,
+    pockets deeper than the part, overlaps, and numbers with no source.
   - One box per question, each a different colour; name the colour in the question text
     ("the orange box — is this section top thickness only, with no border?").
-  - Save the marked image with `paths.py` → `next_reference_path()` and show it in the message.
+  - Save the marked image, or the generated `.svg`, with `paths.py` → `next_reference_path()` and
+    show it in the message.
 - **Do not offer a menu of interpretations of the geometry.** Multiple choice is for decisions the
   user owns — which fit, which material, which of two real options. It is not for "what does this
   part look like". When the shape is uncertain, state the single structure believed to be correct,

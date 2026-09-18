@@ -1,0 +1,79 @@
+{
+  "_how_to_use": [
+    "Copy to <project>/references/part_spec.json and fill in from the Expanded criteria table.",
+    "One entry per feature, each with the source of its numbers, same vocabulary as 02 A00:",
+    "thickness and depth are Z; width and length are in the top view's plane.",
+    "x and y are the feature's CENTRE, measured from the datum below.",
+    "Then: tools/sketch.py -> audit(spec) to check it in text, write_svg(spec, path) to draw it.",
+    "details: a zoomed panel per small feature, so a 3 mm question is legible on a long part.",
+    "  from_edge picks which edge the caliper sits on; it defaults to the datum edge.",
+    "constants / companions / mates / linked \"=\" values: see _EXAMPLE_part_spec.json.",
+    "Delete this key once the file is filled in."
+  ],
+  "spec_version": 1,
+  "part": "<part_name>",
+  "units": "mm",
+  "datum": "center",
+  "outline": {
+    "type": "rect",
+    "width": 0,
+    "length": 0,
+    "corner_radius": 0
+  },
+  "thickness": 0,
+  "features": [
+    {
+      "id": "<short_name>",
+      "type": "hole",
+      "x": 0,
+      "y": 0,
+      "diameter": 0,
+      "depth": "through",
+      "source": "stated",
+      "note": "what it is for"
+    },
+    {
+      "id": "<short_name>",
+      "type": "slot",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "length": 0,
+      "depth": "through",
+      "source": "derived",
+      "note": ""
+    },
+    {
+      "id": "<short_name>",
+      "type": "pocket",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "length": 0,
+      "depth": 0,
+      "source": "measured",
+      "note": ""
+    }
+  ],
+  "questions": [
+    {
+      "about": "<feature id, or omit and give region instead>",
+      "region": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "text": "one question, answerable with yes or a correction (02 A01)"
+    }
+  ],
+  "details": [
+    {
+      "about": "<feature id>",
+      "title": "A",
+      "from_edge": "left",
+      "span": 0,
+      "text": "what to measure, and which candidate value each reading would confirm"
+    }
+  ]
+}
