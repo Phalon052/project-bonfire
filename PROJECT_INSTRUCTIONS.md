@@ -12,6 +12,9 @@ This project is for designing 3D-printable parts, mainly in Blender (connected t
 | When | Read |
 |---|---|
 | Any modelling task | `01_blender_basics.md` |
+| **Before creating a single object in Blender** | `01_blender_basics.md` → **section 0, *Before Blender*.** The request is saved verbatim into the project's `specifications.md` and expanded into criteria, and the structure of the part is confirmed, before any geometry exists |
+| **Reading any dimension** off a photo, drawing or request — what *thick*, *tall*, *wide*, *horizontal*, *vertical* mean | `02_drawing_rules.md` → **A00, *Viewing angle and vocabulary*.** *thick / tall / deep* are always Z; every image is a top-down view unless obviously angled or labelled with a named view |
+| **Anything is unclear and a question is needed** | `02_drawing_rules.md` → **A01, *Asking for clarification*.** Ask with a boxed image, never with a menu of interpretations of the geometry |
 | A drawing, sketch, whiteboard photo, or photo with a ruler is provided | `02_drawing_rules.md` |
 | Anything that has to fit, slide, press, rotate, or thread | `03_materials_tolerances.md` |
 | Printing: slicer settings, supports, orientation, splitting parts, getting ready to print | `04_bambu_basics.md` |
@@ -19,7 +22,7 @@ This project is for designing 3D-printable parts, mainly in Blender (connected t
 | Designing anything that could reuse a known part | Search `catalog/model library/data/projects.csv` first (`paths.py` → `find_projects()`), then read the matching project's `references/specifications.md` |
 | Designing around hardware (screws, bolts, nuts, washers, magnets, inserts) | Search `catalog/hardware inventory/data/inventory.csv` (`inventory.py` → `search()`), then the item files for details; `_NAMING_GUIDE.md` for item names. Prefer items on hand. List the hardware in the project's `specifications.md`, and say if anything is short (add it to the shopping list) |
 
-`TODO.md` in this folder is the project's open-work list. Check it when asked what's left or what to work on next. When an item is finished, check it off; when new work comes up or is deferred, add it under the right heading. Update its *Last updated* date on each change.
+`development/TODO.md` is the project's open-work list (it lives in `development/`, which is git-ignored). Check it when asked what's left or what to work on next. When an item is finished, check it off; when new work comes up or is deferred, add it under the right heading. Update its *Last updated* date on each change.
 
 `USER_GUIDE.md` in this folder is the full how-to for people, not rules. When commands, drawing marks, clearances, or folder rules change, update it to match. `README.md` is a short public overview; update it only when the project's scope or headline commands change.
 
@@ -37,10 +40,11 @@ This project is for designing 3D-printable parts, mainly in Blender (connected t
 **How to work**
 
 - Follow the rules in those files without asking for confirmation. They are standing decisions.
-- Ask before building when something needed is missing, unreadable, or contradictory (a dimension, a unit, a fit type, which side is which). Ask all open questions at once, not one at a time.
+- Ask before building when something needed is missing, unreadable, or contradictory (a dimension, a unit, a fit type, which side is which). Ask all open questions at once, not one at a time. **Ask with a boxed image, and never by offering a menu of readings of the geometry** (`02_drawing_rules.md` → A01).
+- **Understanding the structure is a separate job from collecting the numbers.** Having every dimension does not mean the part is understood — a wrong mental model parses all the numbers happily. Before modelling, state in plain words what the part is and what each feature is *for*, and get a yes.
 - If an assumption is small and covered by a default in these files, use the default and state it in the summary instead of asking.
 - Save previews, renders, screenshots and other outputs in the project's `references/` folder (`paths.py` → `next_reference_path()`). Never create a separate output folder (e.g. `Claude outputs/`); see `01_blender_basics.md` → section 2.
-- After building, measure the result in Blender and report the real dimensions. Do not report intended dimensions.
+- After building, measure the result in Blender and report the real dimensions. Do not report intended dimensions. **Measuring is not confirming:** the report must compare every measurement against the project's *Expanded criteria*, row for row, with a pass or fail on each (`01_blender_basics.md` → section 5). A row also fails when the feature cannot do what the requirement says it is for, even if the number is right. No STL is exported for a part with a failing row.
 - When a correction should apply every time, offer to add it to the right reference file.
 - When a part is proven, offer to add it to the model library using `_TEMPLATE_part.md`.
 - Inventory counts change only through the `/bf-` commands below or when a project is made ready to print (see `04_bambu_basics.md`). Never edit counts otherwise unless requested.
