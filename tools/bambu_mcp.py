@@ -31,6 +31,7 @@ inventory.py are, so it still works through runpy inside Blender:
 
     bb = runpy.run_path(os.path.join(ROOT, "tools", "bambu.py"))
 """
+import functools
 import glob
 import json
 import os
@@ -58,14 +59,36 @@ def bonfire_root():
 
 ROOT = bonfire_root()
 TOOLS = os.path.join(ROOT, "tools")
-bb = runpy.run_path(os.path.join(TOOLS, "bambu.py"))
-b3 = runpy.run_path(os.path.join(TOOLS, "bambu_3mf.py"))
-bpre = runpy.run_path(os.path.join(TOOLS, "bambu_presets.py"))
-bsl = runpy.run_path(os.path.join(TOOLS, "bambu_slice.py"))
-bcl = runpy.run_path(os.path.join(TOOLS, "bambu_cloud.py"))
-blan = runpy.run_path(os.path.join(TOOLS, "bambu_lan.py"))
-bpr = runpy.run_path(os.path.join(TOOLS, "bambu_print.py"))
-bp = runpy.run_path(os.path.join(TOOLS, "paths.py"))
+
+# The tool code is loaded from tools/*.py, and loaded again whenever one of
+# those files changes — so an update takes effect on the next tool call,
+# without restarting the Claude app. (A changed tool *description* or a new
+# parameter still needs a restart: the app reads those once, at start.)
+_MODULES = {"bb": "bambu.py", "b3": "bambu_3mf.py", "bpre": "bambu_presets.py",
+            "bsl": "bambu_slice.py", "bcl": "bambu_cloud.py",
+            "blan": "bambu_lan.py", "bpr": "bambu_print.py", "bp": "paths.py"}
+_LOADED_AT = [0.0]
+
+
+def _code_mtime():
+    return max(os.path.getmtime(os.path.join(TOOLS, f))
+               for f in _MODULES.values() if os.path.isfile(os.path.join(TOOLS, f)))
+
+
+def _fresh():
+    """Reload the tool modules if any of their files changed since loading."""
+    newest = _code_mtime()
+    if newest <= _LOADED_AT[0]:
+        return False
+    fresh = {name: runpy.run_path(os.path.join(TOOLS, f))
+             for name, f in _MODULES.items()}
+    globals().update(fresh)
+    _LOADED_AT[0] = newest
+    return True
+
+
+bb = b3 = bpre = bsl = bcl = blan = bpr = bp = None
+_fresh()
 
 CONFIG_PATH = os.path.join(TOOLS, "bambu_config.json")
 
@@ -114,6 +137,26 @@ except ImportError:                                   # pragma: no cover
         raise
 
 mcp = FastMCP("bonfire-bambu")
+_register_tool = mcp.tool
+
+
+def _tool_with_reload(*args, **kwargs):
+    """mcp.tool, plus a check for changed code before every call."""
+    register = _register_tool(*args, **kwargs)
+
+    def wrap(fn):
+        @functools.wraps(fn)
+        def call(*a, **kw):
+            try:
+                _fresh()
+            except Exception as exc:          # a half-saved file: keep the old code
+                sys.stderr.write("bonfire-bambu: reload skipped (%s)\n" % exc)
+            return fn(*a, **kw)
+        return register(call)
+    return wrap
+
+
+mcp.tool = _tool_with_reload
 
 
 def _ok(value):
@@ -276,11 +319,28 @@ def compare_orientations(path: str, part_name: str = "") -> str:
     return _ok(bb["compare_orientations"](path, name=part_name or None))
 
 
+def _part_materials(text):
+    """ "hex_nut: Overture PLA black, machine_screw: PLA white" -> dict."""
+    out = {}
+    for chunk in text.split(","):
+        if ":" in chunk:
+            part, mat = chunk.split(":", 1)
+            if part.strip() and mat.strip():
+                out[part.strip()] = mat.strip()
+    return out
+
+
 @mcp.tool()
-def plan_plate(project: str, spacing_mm: float = 0.0) -> str:
-    """Work out what would go on the plate for a project — newest STL of each
-    part, Quantity copies, packed with the given spacing — without writing
-    anything. A dry run of build_print_3mf."""
+def plan_plate(project: str, spacing_mm: float = 0.0,
+               plate_goal: str = "fewest_plates", multicolor: bool = False,
+                    part_materials: str = "") -> str:
+    """Work out how a project would go onto plates — newest STL of each part,
+    oriented, Quantity copies, with room for each part's brim and raft —
+    without writing anything. A dry run of build_print_3mf. When it doesn't
+    fit one plate, says how many plates and what goes on each.
+    plate_goal: fewest_plates | shortest_time (tall parts share plates).
+    multicolor / part_materials: as in build_print_3mf — by default each
+    filament (type, brand, colour) gets plates of its own."""
     folder, hits = bp["resolve_project"](project)
     if folder is None:
         return _fail("No single project matches %r" % project, candidates=hits)
@@ -288,32 +348,58 @@ def plan_plate(project: str, spacing_mm: float = 0.0) -> str:
     if not exports:
         return _fail("No STLs in %s/stl" % folder)
     quantities = bb["read_quantities"](folder)
-    sizes, labels = [], []
+    overrides = _part_materials(part_materials)
+    project_material = bb["read_material"](folder) or bpre["DEFAULT_MATERIAL"]
+    sizes, labels, reach, tall, mats = [], [], [], [], []
     for part, stl in exports.items():
         mesh = bb["bm"]["load_mesh"](stl)
         placed = bb["orient"](mesh, mode="auto", name=part)["mesh"]
         size = bb["bm"]["bbox"](placed)["size"]
+        raft = bb["suggest_raft"](placed)["raft"]
         for _ in range(max(1, quantities.get(part, 1))):
             sizes.append((size[0], size[1]))
             labels.append(part)
-    cfg = read_config()
-    packing = bb["arrange_plate"](
-        sizes, spacing_mm or cfg.get("arrange_spacing_mm",
-                                     bb["DEFAULT_SPACING_MM"]))
+            reach.append(bb["part_clearance"](raft=bool(raft)))
+            tall.append(size[2])
+            mats.append(bpre["filament_key"](overrides.get(part, project_material)))
+    try:
+        plan = bb["plan_plates"](sizes, spacing_mm or bb["DEFAULT_SPACING_MM"],
+                                 clearances=None if spacing_mm else reach,
+                                 heights=tall, materials=mats, goal=plate_goal,
+                                 max_materials=4 if multicolor else 1)
+    except ValueError as exc:
+        return _fail(str(exc))
     return _ok({"project": folder, "material": bb["read_material"](folder),
-                "copies": labels, "fits_one_plate": packing["fits"],
-                "leftover": [labels[i["index"]] for i in packing["leftover"]],
-                "spacing_mm": packing["spacing_mm"]})
+                "copies": len(labels), "plate_count": plan["plate_count"],
+                "fits_one_plate": plan["plate_count"] <= 1 and not plan["unplaceable"],
+                "plates": [{"plate": k + 1,
+                            "parts": sorted(labels[i] for i in pl["items"]),
+                            "filaments": pl["materials"],
+                            "height_mm": pl["height_mm"]}
+                           for k, pl in enumerate(plan["plates"])],
+                "too_big_for_a_plate": sorted(set(labels[i] for i in plan["unplaceable"])),
+                "goal": plate_goal})
 
 
 @mcp.tool()
 def build_print_3mf(project: str, parts: str = "", material: str = "",
                     spacing_mm: float = 0.0, orient_mode: str = "auto",
-                    process_preset: str = "", arrange: str = "auto") -> str:
+                    process_preset: str = "", arrange: str = "auto",
+                    plate_goal: str = "fewest_plates", multicolor: bool = False,
+                    part_materials: str = "") -> str:
     """
     Build a real Bambu Studio project 3MF for a project, in its 3mf/ folder:
-    newest STL of each part, oriented, copied to its Quantity, packed on one
-    plate, with filament assigned and supports/raft set from the rules.
+    newest STL of each part, oriented, copied to its Quantity, packed on the
+    plate, with filament assigned and supports/raft set from the rules. Jobs
+    that don't fit one plate go on as many plates as needed, in the same file.
+    plate_goal: fewest_plates (default) | shortest_time (tall parts share
+        plates so short plates don't wait on tall layers).
+    multicolor: false (default) keeps one filament per plate — parts in
+        different filaments (type, brand or colour) get their own plates.
+        Only set true when the person asks for a multicolour print.
+    part_materials: per-part filament, e.g. "hex_nut: Overture PLA black,
+        machine_screw: PLA white". Blank uses the project's material.
+    Supports and rafts always print in the part's own filament.
 
     Does not reserve hardware — use prepare_print for the full §4 flow.
     parts: comma-separated part names, or blank for all.
@@ -325,6 +411,10 @@ def build_print_3mf(project: str, parts: str = "", material: str = "",
     """
     kwargs = _layout_kwargs(spacing_mm, arrange)
     kwargs["orient_mode"] = orient_mode
+    kwargs["plate_goal"] = plate_goal
+    kwargs["multicolor"] = multicolor
+    if part_materials:
+        kwargs["material_overrides"] = _part_materials(part_materials)
     if parts:
         kwargs["parts"] = [p.strip() for p in parts.split(",") if p.strip()]
     if material:
@@ -342,7 +432,8 @@ def build_print_3mf(project: str, parts: str = "", material: str = "",
 @mcp.tool()
 def prepare_print(project: str, parts: str = "", material: str = "",
                   spacing_mm: float = 0.0, orient_mode: str = "auto",
-                  arrange: str = "auto") -> str:
+                  arrange: str = "auto", plate_goal: str = "fewest_plates", multicolor: bool = False,
+                    part_materials: str = "") -> str:
     """
     "Get it ready to print", the whole 04_bambu_basics.md §4 flow in one call:
     build the project 3MF, reserve the project's hardware in the inventory, and
@@ -352,6 +443,10 @@ def prepare_print(project: str, parts: str = "", material: str = "",
     """
     kwargs = _layout_kwargs(spacing_mm, arrange)
     kwargs["orient_mode"] = orient_mode
+    kwargs["plate_goal"] = plate_goal
+    kwargs["multicolor"] = multicolor
+    if part_materials:
+        kwargs["material_overrides"] = _part_materials(part_materials)
     if parts:
         kwargs["parts"] = [p.strip() for p in parts.split(",") if p.strip()]
     if material:
@@ -459,7 +554,9 @@ def open_in_studio(path: str) -> str:
 
 @mcp.tool()
 def prepare_and_slice(project: str, parts: str = "", material: str = "",
-                      orient_mode: str = "auto", arrange: str = "auto") -> str:
+                      orient_mode: str = "auto", arrange: str = "auto",
+                      plate_goal: str = "fewest_plates", multicolor: bool = False,
+                    part_materials: str = "") -> str:
     """
     The whole way from STLs to a sliced file: build the project 3MF with the
     rules applied, reserve the hardware, then slice it. Returns both reports.
@@ -468,6 +565,10 @@ def prepare_and_slice(project: str, parts: str = "", material: str = "",
     """
     kwargs = _layout_kwargs(0.0, arrange)
     kwargs["orient_mode"] = orient_mode
+    kwargs["plate_goal"] = plate_goal
+    kwargs["multicolor"] = multicolor
+    if part_materials:
+        kwargs["material_overrides"] = _part_materials(part_materials)
     if parts:
         kwargs["parts"] = [p.strip() for p in parts.split(",") if p.strip()]
     if material:

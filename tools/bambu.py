@@ -74,6 +74,10 @@ APPROVED_SETTINGS = {
     "support_type": {"normal(auto)", "tree(auto)"},
     "support_on_build_plate_only": {"0", "1"},
     "raft_layers": None,                     # 0 = off, 2 = on (04 section 2)
+    # Supports and raft print in the part's own filament (04 section 2): set
+    # to the part's filament number when supports or a raft are on.
+    "support_filament": None,
+    "support_interface_filament": None,
 }
 
 # Never changed unless the user asks for it in so many words.
@@ -633,22 +637,69 @@ def arrange_plate(sizes, spacing_mm=DEFAULT_SPACING_MM, bed=None, allow_rotate=T
     }
 
 
-def plan_plates(sizes, spacing_mm=DEFAULT_SPACING_MM):
-    """Split a job across as few plates as it takes."""
-    remaining = list(range(len(sizes)))
-    plates = []
-    while remaining:
-        subset = [sizes[i] for i in remaining]
-        result = arrange_plate(subset, spacing_mm)
-        on_this = [remaining[j] for j, pos in enumerate(result["positions"])
-                   if pos is not None]
-        if not on_this:
-            break                                    # nothing fits at all
-        plates.append({"items": on_this,
-                       "positions": [p for p in result["positions"] if p]})
-        remaining = [i for i in remaining if i not in on_this]
-    return {"plates": plates, "plate_count": len(plates),
-            "unplaceable": remaining}
+PLATE_GOALS = ("fewest_plates", "shortest_time")
+
+
+def plan_plates(sizes, spacing_mm=DEFAULT_SPACING_MM, clearances=None,
+                heights=None, materials=None, goal="fewest_plates",
+                max_materials=4):
+    """
+    Split a job across plates. `sizes` are footprints (w, d); `clearances`,
+    `heights` and `materials` are optional, one per item.
+
+    goal: "fewest_plates" — biggest footprints first, each dropped on the
+          first plate it fits, so plates fill up before a new one starts.
+          "shortest_time" — tallest first, so tall parts share plates and
+          short plates don't sit through a tall part's layers; can use a
+          plate more than fewest_plates would.
+    A plate never needs more than `max_materials` filaments (the AMS holds 4).
+
+    Returns {"plates": [{"items": [index...], "positions": [pos...],
+    "height_mm", "materials"}], "plate_count", "unplaceable": [index...]}.
+    Positions are plate coordinates, like arrange_plate's.
+    """
+    if goal not in PLATE_GOALS:
+        raise ValueError("goal must be one of %s" % ", ".join(PLATE_GOALS))
+    n = len(sizes)
+    heights = heights or [0.0] * n
+    materials = materials or [""] * n
+
+    def area(i):
+        return sizes[i][0] * sizes[i][1]
+    if goal == "shortest_time":
+        order = sorted(range(n), key=lambda i: (-heights[i], -area(i)))
+    else:
+        order = sorted(range(n), key=lambda i: (-area(i), -heights[i]))
+
+    def packs(indexes):
+        r = arrange_plate([sizes[i] for i in indexes], spacing_mm,
+                          clearances=None if clearances is None
+                          else [clearances[i] for i in indexes])
+        return r if r["fits"] else None
+
+    plates, unplaceable = [], []
+    for i in order:
+        if packs([i]) is None:
+            unplaceable.append(i)
+            continue
+        for plate in plates:
+            mats = set(materials[j] for j in plate) | {materials[i]}
+            if len(mats) > max_materials:
+                continue
+            if packs(plate + [i]) is not None:
+                plate.append(i)
+                break
+        else:
+            plates.append([i])
+
+    out = []
+    for plate in plates:
+        r = packs(plate)
+        out.append({"items": plate, "positions": r["positions"],
+                    "height_mm": round(max(heights[i] for i in plate), 1),
+                    "materials": sorted(set(materials[i] for i in plate) - {""})})
+    return {"plates": out, "plate_count": len(out), "goal": goal,
+            "unplaceable": sorted(unplaceable)}
 
 
 # ── reading a project's specifications.md ────────────────────────────
@@ -760,7 +811,8 @@ def live_ams():
 def build_print_3mf(project, parts=None, material=None, material_overrides=None,
                     settings=None, user_requested=None, spacing_mm=None,
                     orient_mode="auto", process=None, out_path=None,
-                    arrange="auto", studio_exe="", ams="auto"):
+                    arrange="auto", studio_exe="", ams="auto",
+                    plate_goal="fewest_plates", multicolor=False):
     """
     The main Layer A tool: newest STL of each part, oriented, copied to its
     Quantity, packed on the plate, with filament and the approved settings
@@ -773,6 +825,14 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
              always uses its own default spacing, so a custom spacing_mm
              means ours.
 
+    multicolor: False (default) — one filament per plate. Parts in different
+         filaments (type, brand or colour) go on separate plates, so the AMS
+         never swaps mid-print (no purge waste, no poop). True allows up to
+         4 filaments on a plate.
+    material_overrides: {part: "Overture PLA black", ...} per part.
+    plate_goal: when the parts don't fit one plate they go on as many plates
+         as it takes, in the same file — "fewest_plates" (default) or
+         "shortest_time" (tall parts share plates); see plan_plates.
     ams: "auto" (default) reads the loaded rolls from the printer and gives
          each filament the colour of the roll that will print it, so Studio's
          send dialog picks that AMS slot by itself; a parse_ams() list uses
@@ -843,57 +903,97 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
                         "material": mat, "material_name": raw_mat, "quantity": max(1, quantities.get(part, 1)),
                         "size": size, "supports": sup, "raft": raft})
 
-    # 2. One AMS slot per distinct material, in first-seen order.
-    materials, material_names = [], []
+    # 2. One filament per distinct brand/type/colour, in first-seen order.
+    material_names = []
     for e in entries:
-        if e["material"] not in materials:
-            materials.append(e["material"])
+        e["filament"] = bpre["filament_key"](e["material_name"] or e["material"])
+        if e["filament"] not in [bpre["filament_key"](m) for m in material_names]:
             material_names.append(e["material_name"] or e["material"])
-    if len(materials) > 4:
+    keys = [bpre["filament_key"](m) for m in material_names]
+    limit = 4 if multicolor else 16
+    if len(material_names) > limit:
         return {"ok": False, "error":
-                "%d different materials, but the AMS holds 4: %s"
-                % (len(materials), ", ".join(materials))}
+                "%d different filaments, more than %s: %s"
+                % (len(material_names),
+                   "the AMS holds on one plate (4)" if multicolor
+                   else "one project should carry (16)",
+                   ", ".join(material_names))}
     for e in entries:
-        e["settings"]["extruder"] = str(materials.index(e["material"]) + 1)
+        n = str(keys.index(e["filament"]) + 1)
+        e["settings"]["extruder"] = n
+        if e["supports"]["enable_support"] or e["raft"]["raft"]:
+            # Supports and raft in the part's own filament, never another.
+            e["settings"]["support_filament"] = n
+            e["settings"]["support_interface_filament"] = n
+    materials = material_names
 
-    # 3. Pack every copy onto the plate.
-    sizes, owners, reach = [], [], []
+    # 3. Pack every copy onto the plate — or, when they don't all fit, onto
+    # as many plates as it takes (plan_plates), all in this one file.
+    sizes, owners, reach, tall, mats = [], [], [], [], []
     for e in entries:
         for _ in range(e["quantity"]):
             sizes.append((e["size"][0], e["size"][1]))
             owners.append(e)
             reach.append(part_clearance(raft=bool(e["raft"]["raft"])))
+            tall.append(e["size"][2])
+            mats.append(e["filament"])
     any_raft = any(e["raft"]["raft"] for e in entries)
-    packing = arrange_plate(sizes, spacing_mm,
-                            clearances=None if custom_spacing else reach)
+    clear = None if custom_spacing else reach
+    packing = arrange_plate(sizes, spacing_mm, clearances=clear)
+    placements = [None] * len(sizes)           # (plate index, position)
+    split_colours = len(keys) > 1 and not multicolor
+    if packing["fits"] and not split_colours:
+        for i, pos in enumerate(packing["positions"]):
+            placements[i] = (0, pos)
+        plate_plan = None
+    else:
+        plate_plan = plan_plates(sizes, spacing_mm, clearances=clear,
+                                 heights=tall, materials=mats,
+                                 goal=plate_goal or "fewest_plates",
+                                 max_materials=4 if multicolor else 1)
+        for p_index, plate in enumerate(plate_plan["plates"]):
+            for i, pos in zip(plate["items"], plate["positions"]):
+                placements[i] = (p_index, pos)
 
     items, leftover_parts = [], []
     by_part = {}
-    for i, (e, pos) in enumerate(zip(owners, packing["positions"])):
-        if pos is None:
+    for i, (e, place) in enumerate(zip(owners, placements)):
+        if place is None:
             leftover_parts.append(e["part"])
             continue
+        p_index, pos = place
         mesh = e["mesh"]
-        if pos["rotated"]:
-            mesh = bm["transform_mesh"](mesh, bm["rotation_matrix"]("z", 90))
-            mesh, _ = bm["drop_to_bed"](mesh)
-        entry = by_part.get(e["part"])
+        key = (e["part"], pos["rotated"])
+        entry = by_part.get(key)
         if entry is None:
+            if pos["rotated"]:
+                mesh = bm["transform_mesh"](mesh, bm["rotation_matrix"]("z", 90))
+                mesh, _ = bm["drop_to_bed"](mesh)
             entry = {"mesh": mesh, "name": e["part"],
                      "source_file": os.path.basename(e["stl"]),
                      "settings": e["settings"], "instances": []}
-            by_part[e["part"]] = entry
+            by_part[key] = entry
             items.append(entry)
-        entry["instances"].append((pos["x"], pos["y"], 0.0))
+        entry["instances"].append((pos["x"], pos["y"], 0.0, p_index))
+    plate_count = 1 + max((p[0] for p in placements if p), default=0)
 
     if not items:
         return {"ok": False, "error": "Nothing fits on the plate.",
                 "leftover": leftover_parts}
     if leftover_parts:
         warnings.append(
-            "These copies don't fit on one plate: %s. Say the word and I'll "
-            "split them across plates (04 section 4)."
-            % ", ".join(sorted(set(leftover_parts))))
+            "These are bigger than the plate on their own: %s — they need "
+            "splitting (04 section 5)." % ", ".join(sorted(set(leftover_parts))))
+    if plate_count > 1:
+        why = ("One filament per plate, so each colour/type has its own"
+               if split_colours and packing["fits"] else "Didn't fit one plate")
+        notes.append("%s — %d plates (%s): %s."
+                     % (why, plate_count, (plate_goal or "fewest_plates").replace("_", " "),
+                        "; ".join("plate %d: %s, %.0f mm tall"
+                                  % (k + 1, ", ".join(sorted(set(
+                                      owners[i]["part"] for i in pl["items"]))),
+                                     pl["height_mm"])
+                                  for k, pl in enumerate(plate_plan["plates"]))))
 
     # 4. Settings for the whole project.
     proj_settings, source, application = bpre["project_settings"](
@@ -919,6 +1019,15 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
     elif ams == "auto":
         notes.append("Couldn't read the AMS, so filament colours are the "
                      "template's; pick the slot in Studio's send dialog.")
+    # A colour named in the material ("... black") and no roll found for it:
+    # still colour the filament that way, so the file says what it wants.
+    colours = list(proj_settings.get("filament_colour") or [])
+    for i, name in enumerate(material_names):
+        hint = bpre["colour_hint"](name)
+        if hint and i < len(colours) and not (i < len(rolls) and rolls[i]):
+            colours[i] = hint
+    if colours:
+        proj_settings["filament_colour"] = colours
     if source == "minimal":
         warnings.append(
             "No tools/bambu_template.3mf, so the presets were built from "
@@ -937,9 +1046,17 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
     # hard-codes min_obj_distance to 0) and knows nothing of a raft's spread,
     # so two rafted parts end up with overlapping first layers and the slice
     # fails with "gcode path conflicts". Seen on this project's screw and nut.
-    use_studio = arrange == "studio" or (
+    plate_names = {"names": {k + 1: ", ".join(material_names[keys.index(m)]
+                                              for m in pl["materials"])
+                             for k, pl in enumerate(plate_plan["plates"])}} \
+        if plate_plan else None
+    use_studio = plate_count == 1 and (arrange == "studio" or (
         arrange == "auto" and not custom_spacing and not any_raft
-        and bool(bsl["find_studio"](studio_exe)))
+        and bool(bsl["find_studio"](studio_exe))))
+    if arrange == "studio" and plate_count > 1:
+        warnings.append("Bambu Studio's Arrange isn't used on a job that "
+                        "spans plates — it would move parts between plates. "
+                        "This project's packer laid out each plate.")
     if arrange == "studio" and any_raft:
         warnings.append("Bambu Studio's command-line Arrange doesn't allow for "
                         "a raft's spread, so rafted parts may be packed too "
@@ -954,7 +1071,7 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
         scratch = os.path.join(tempfile.mkdtemp(prefix="bonfire_arrange_"),
                                os.path.basename(out))
         b3["write_project"](scratch, items, proj_settings, title=folder,
-                            application=application)
+                            application=application, plate=plate_names)
         result = bsl["studio_arrange"](scratch, out_path=out,
                                        studio_exe=studio_exe)
         if result.get("ok"):
@@ -971,7 +1088,7 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
             os.replace(scratch, out)
     else:
         b3["write_project"](out, items, proj_settings, title=folder,
-                            application=application)
+                            application=application, plate=plate_names)
 
     return {
         "ok": True,
@@ -987,8 +1104,8 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
                                             "filament_id": r.get("filament_id")})
                          for i, r in enumerate(rolls)},
         "parts": [{"part": it["name"], "copies": len(it["instances"]),
-                   "material": next(x["material"] for x in entries
-                                    if x["part"] == it["name"]),
+                   "material": next(x["material_name"] or x["material"]
+                                    for x in entries if x["part"] == it["name"]),
                    "ams_slot": it["settings"].get("extruder"),
                    "settings_changed": {k: v for k, v in it["settings"].items()
                                         if k != "extruder"}}
@@ -996,7 +1113,16 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
         "plate": {"arranged_by": arranged_by,
                   "spacing_mm": None if arranged_by == "studio" else spacing_mm,
                   "fits": not leftover_parts,
+                  "plates": plate_count,
                   "leftover": sorted(set(leftover_parts))},
+        "plates": ([{"plate": k + 1,
+                     "filament": ", ".join(material_names[keys.index(m)]
+                                           for m in pl["materials"]),
+                     "parts": sorted(set(owners[i]["part"] for i in pl["items"])),
+                     "copies": len(pl["items"]),
+                     "height_mm": pl["height_mm"]}
+                    for k, pl in enumerate(plate_plan["plates"])]
+                   if plate_plan else None),
         "notes": notes,
         "warnings": warnings,
     }
@@ -1042,8 +1168,15 @@ def format_report(report):
     if plate.get("arranged_by") == "studio":
         lines.append("  Plate laid out by Bambu Studio's Arrange")
     elif plate:
-        lines.append("  Plate laid out here, centred, with room for each "
-                     "part's brim and raft")
+        lines.append("  %s laid out here, centred, with room for each "
+                     "part's brim and raft"
+                     % ("Plate" if plate.get("plates", 1) == 1
+                        else "%d plates" % plate["plates"]))
+    for pl in report.get("plates") or []:
+        lines.append("    plate %d: %s (%d part%s, %.0f mm tall)%s"
+                     % (pl["plate"], ", ".join(pl["parts"]), pl["copies"],
+                        "" if pl["copies"] == 1 else "s", pl["height_mm"],
+                        " — " + pl["filament"] if pl.get("filament") else ""))
     rolls = report.get("loaded_rolls") or {}
     for slot, preset in sorted(report["ams_slots"].items()):
         roll = rolls.get(slot)

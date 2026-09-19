@@ -840,6 +840,82 @@ def main():
     else:
         note("skipped", "no tools/bambu_template.3mf here")
 
+    print("\n== more than one plate ==")
+    pp = bb["plan_plates"]
+    r_ = pp([(120, 120)] * 4 + [(50, 50)] * 4, heights=[5] * 4 + [80] * 4,
+            goal="shortest_time")
+    check("shortest_time puts the tall parts together",
+          any(set(range(4, 8)) <= set(pl["items"]) for pl in r_["plates"]), True)
+    check("tallest plate first", [pl["height_mm"] for pl in r_["plates"]], [80, 5])
+    r_ = pp([(20, 20)] * 5, materials=list("ABCDE"))
+    check("no plate needs more than 4 filaments",
+          [len(pl["materials"]) for pl in r_["plates"]], [4, 1])
+    r_ = pp([(300, 20), (20, 20)])
+    check("a part bigger than the plate is reported, not dropped",
+          (r_["unplaceable"], r_["plate_count"]), ([0], 1))
+    r_ = pp([(120, 120)] * 3, clearances=[7.0] * 3)
+    check("rafted parts get room for the raft (3 fit without, fewer with)",
+          r_["plate_count"] > pp([(120, 120)] * 3)["plate_count"], True)
+    check("plate grid columns", [b3["plate_columns"](n) for n in (1, 2, 3, 4, 5, 9, 10)],
+          [1, 2, 2, 2, 3, 3, 4])
+    check("plate 2 of 2 sits a bed and a fifth to the right",
+          [round(v, 1) for v in b3["plate_origin"](1, 2)], [307.2, 0])
+    check("plate 3 of 3 starts the next row, towards -y",
+          [round(v, 1) for v in b3["plate_origin"](2, 3)], [0, -307.2])
+    mp_path = os.path.join(tmp, "two_plates.3mf")
+    b3["write_project"](mp_path, [{"mesh": mesh, "name": "cube",
+                                   "instances": [(128, 128, 0, 0), (128, 128, 0, 1)],
+                                   "settings": {"extruder": "1"}}],
+                        {"filament_colour": ["#FFFFFF"], "printer_model": "Bambu Lab P1S"})
+    with zipfile.ZipFile(mp_path) as z_:
+        cfg_ = z_.read("Metadata/model_settings.config").decode()
+        mdl_ = z_.read("3D/3dmodel.model").decode()
+        names_ = z_.namelist()
+    check("two <plate> blocks", cfg_.count("<plate>"), 2)
+    check("each plate lists its one instance",
+          [blk.count("<model_instance>") for blk in cfg_.split("<plate>")[1:]], [1, 1])
+    check("second copy moved onto plate 2",
+          "435.2 128 0" in mdl_ and " 128 128 0\"" in mdl_, True)
+    check("a thumbnail per plate", "Metadata/plate_2.png" in names_, True)
+
+    print("\n== more than one filament in project_settings (Studio 2.x layout) ==")
+    proot = os.path.join(tmp, "presets")
+    os.makedirs(proot)
+    json.dump({"name": "base_pla", "nozzle_temperature": ["220"], "hot_plate_temp": ["55"],
+               "filament_type": ["PLA"]}, open(os.path.join(proot, "base_pla.json"), "w"))
+    json.dump({"name": "dual", "filament_extruder_variant": ["Std", "HF"],
+               "nozzle_temperature": ["200", "200"]}, open(os.path.join(proot, "dual.json"), "w"))
+    json.dump({"name": "PLA A", "inherits": "base_pla", "include": ["dual"],
+               "nozzle_temperature": ["220", "225"]}, open(os.path.join(proot, "PLA A.json"), "w"))
+    json.dump({"name": "PETG B", "inherits": "base_pla", "include": ["dual"],
+               "nozzle_temperature": ["245", "250"], "hot_plate_temp": ["70"],
+               "filament_type": ["PETG"]}, open(os.path.join(proot, "PETG B.json"), "w"))
+    one = {"filament_settings_id": ["PLA A"], "filament_type": ["PLA"],
+           "filament_colour": ["#00AE42"], "filament_ids": ["GFA00"],
+           "filament_extruder_variant": ["Std", "HF"], "filament_self_index": ["1", "1"],
+           "nozzle_temperature": ["220", "225"], "hot_plate_temp": ["55"],
+           "filament_prime_volume": ["45"], "flush_volumes_matrix": ["0"],
+           "flush_volumes_vector": ["140", "140"],
+           "different_settings_to_system": ["p", "filament_prime_volume", ""],
+           "bed_exclude_area": ["0x0", "18x0", "18x28", "0x28"]}
+    two = bpre["expand_filaments"](dict(one), [
+        {"preset": "PLA A", "id": "GFA00", "type": "PLA", "colour": "#000000"},
+        {"preset": "PETG B", "id": "GFG02", "type": "PETG", "colour": "#FFFFFF"}], proot)
+    check("variant lists get a block per filament",
+          two["filament_extruder_variant"], ["Std", "HF", "Std", "HF"])
+    check("PETG's block comes from its own preset", two["nozzle_temperature"],
+          ["220", "225", "245", "250"])
+    check("...including settings without the filament_ prefix", two["hot_plate_temp"], ["55", "70"])
+    check("the template's filament keeps its tweaks", two["filament_prime_volume"][0], "45")
+    check("self index maps each variant to its filament", two["filament_self_index"],
+          ["1", "1", "2", "2"])
+    check("flush matrix is n x n", two["flush_volumes_matrix"], ["0", "280", "280", "0"])
+    check("per-preset diff list grows", len(two["different_settings_to_system"]), 4)
+    check("printer settings untouched", len(two["bed_exclude_area"]), 4)
+    same = bpre["expand_filaments"](dict(one), [
+        {"preset": "PLA A", "id": "GFA00", "type": "PLA", "colour": "#00AE42"}], proot)
+    check("one filament on the template's preset changes nothing", same, one)
+
     print("\n== matching project filaments to the rolls in the AMS ==")
     ams_now = [
         {"slot": 1, "loaded": True, "type": "PLA", "colour": "#161616", "filament_id": "GFA00"},
@@ -853,6 +929,17 @@ def main():
     check("two PLAs get two different rolls",
           [r["slot"] for r in mp(["Bambu PLA Basic", "PLA"], ams_now)], [1, 2])
     check("nothing loaded of that type", mp(["ABS"], ams_now), [None])
+    check("a named colour picks that colour's roll", [r["slot"] for r in mp(["PLA yellow"], ams_now)], [2])
+    check("Overture PLA black -> the Overture black roll",
+          [r["slot"] for r in mp(["Overture PLA black"], ams_now)], [3])
+    check("no roll in the named colour -> none", mp(["PLA red"], ams_now), [None])
+    check("filament identity ignores case/spacing, keeps colour",
+          (bpre["filament_key"]("overture  pla Black") == bpre["filament_key"]("Overture PLA black"),
+           bpre["filament_key"]("PLA black") == bpre["filament_key"]("PLA white")), (True, False))
+    check("colour word read from the name", bpre["colour_hint"]("Overture PLA grey"), "#808080")
+    check("support filament may be set to the part's own",
+          bb["guard_settings"]({"support_filament": "2", "support_interface_filament": "2"}),
+          {"support_filament": "2", "support_interface_filament": "2"})
     check("empty slots are skipped",
           mp(["PLA"], [{"slot": 1, "loaded": False, "type": "", "colour": ""}]), [None])
 

@@ -28,6 +28,7 @@ import datetime
 import os
 import struct
 import json
+import math
 import zlib
 import zipfile
 
@@ -87,6 +88,38 @@ def _translation(dx, dy, dz):
 
 IDENTITY_MATRIX_16 = "1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"
 
+# Bambu Studio lays plates out in a grid in one shared space, each plate a
+# bed's width plus a fifth apart (PartPlate.hpp LOGICAL_PART_PLATE_GAP = 1/5,
+# PartPlateList::compute_origin): plate i sits at column i % cols, row
+# i // cols, rows running towards -y, with cols = ceil(sqrt(plate count)).
+PLATE_GAP_FRACTION = 1.0 / 5.0
+
+
+def plate_columns(count):
+    value = math.sqrt(count)
+    rounded = round(value)
+    return int(rounded + 1 if value > rounded else rounded) or 1
+
+
+def plate_origin(index, count, bed=BED_SIZE_MM):
+    """Where plate `index` (0-based) starts in the shared space."""
+    cols = plate_columns(count)
+    stride = bed * (1.0 + PLATE_GAP_FRACTION)
+    return ((index % cols) * stride, -(index // cols) * stride)
+
+
+def _instances(item):
+    """(x, y, z, plate) for each instance; plate defaults to 0."""
+    for inst in item["instances"]:
+        if len(inst) == 4:
+            yield tuple(inst)
+        else:
+            yield (inst[0], inst[1], inst[2], 0)
+
+
+def plate_count(items):
+    return 1 + max((p for it in items for *_, p in _instances(it)), default=0)
+
 
 # ── the model file ───────────────────────────────────────────────────
 
@@ -137,15 +170,17 @@ def _model_file(items, title, application=APPLICATION):
 
         item["_mesh_id"] = mesh_id
         item["_object_id"] = container_id
-        for pos in item["instances"]:
+        for pos in _instances(item):
             build.append((container_id, pos))
         next_id = container_id + 1
 
+    count = plate_count(items)
     out.append(' </resources>')
     out.append(' <build>')
-    for oid, (x, y, z) in build:
+    for oid, (x, y, z, plate) in build:
+        ox, oy = plate_origin(plate, count)
         out.append('  <item objectid="%d" transform="%s" printable="1"/>'
-                   % (oid, _translation(x, y, z)))
+                   % (oid, _translation(x + ox, y + oy, z)))
     out.append(' </build>')
     out.append('</model>')
     return "\n".join(out)
@@ -179,24 +214,30 @@ def _model_settings(items, plate):
         out.append('    </part>')
         out.append('  </object>')
 
-    out.append('  <plate>')
-    out.append('    <metadata key="plater_id" value="1"/>')
-    out.append('    <metadata key="plater_name" value="%s"/>'
-               % _esc(plate.get("name", "")))
-    out.append('    <metadata key="locked" value="false"/>')
-    # Bed type and print sequence live in project_settings.config; Studio does
-    # not repeat them on the plate of an unsliced project, so neither do we.
+    # One <plate> per plate, listing the instances on it. instance_id is the
+    # instance's position among its object's build items, in file order.
+    count = plate_count(items)
+    on_plate = [[] for _ in range(count)]
     identify = 100
     for item in items:
-        for n in range(len(item["instances"])):
-            out.append('    <model_instance>')
-            out.append('      <metadata key="object_id" value="%d"/>'
-                       % item["_object_id"])
-            out.append('      <metadata key="instance_id" value="%d"/>' % n)
-            out.append('      <metadata key="identify_id" value="%d"/>' % identify)
-            out.append('    </model_instance>')
+        for n, (_, _, _, p) in enumerate(_instances(item)):
+            on_plate[p].append((item["_object_id"], n, identify))
             identify += 1
-    out.append('  </plate>')
+    for p in range(count):
+        out.append('  <plate>')
+        out.append('    <metadata key="plater_id" value="%d"/>' % (p + 1))
+        name = plate.get("names", {}).get(p + 1, plate.get("name", "") if p == 0 else "")
+        out.append('    <metadata key="plater_name" value="%s"/>' % _esc(name))
+        out.append('    <metadata key="locked" value="false"/>')
+        # Bed type and print sequence live in project_settings.config; Studio
+        # does not repeat them on the plate of an unsliced project.
+        for oid, n, ident in on_plate[p]:
+            out.append('    <model_instance>')
+            out.append('      <metadata key="object_id" value="%d"/>' % oid)
+            out.append('      <metadata key="instance_id" value="%d"/>' % n)
+            out.append('      <metadata key="identify_id" value="%d"/>' % ident)
+            out.append('    </model_instance>')
+        out.append('  </plate>')
     out.append('  <assemble>')
     out.append('  </assemble>')
     out.append('</config>')
@@ -224,7 +265,9 @@ def _png(width, height, rgb=(30, 32, 36)):
 def write_project(path, items, project_settings, plate=None, title=None,
                   application=None):
     """
-    items: [{"mesh": mesh, "name": str, "instances": [(x, y, z), ...],
+    items: [{"mesh": mesh, "name": str, "instances": [(x, y, z), ...] or
+             [(x, y, z, plate), ...] with plate 0-based (x, y are that
+             plate's own coordinates; the offset is added here),
              "settings": {"extruder": "1", "enable_support": "1", ...},
              "source_file": str}]
            Coordinates are absolute plate coordinates: plate 1 runs 0..256 in
@@ -255,8 +298,9 @@ def write_project(path, items, project_settings, plate=None, title=None,
         z.writestr("3D/3dmodel.model", model_xml)
         z.writestr("Metadata/project_settings.config", settings_json)
         z.writestr("Metadata/model_settings.config", config_xml)
-        z.writestr("Metadata/plate_1.png", _png(512, 512))
-        z.writestr("Metadata/plate_1_small.png", _png(128, 128))
+        for p in range(1, plate_count(items) + 1):
+            z.writestr("Metadata/plate_%d.png" % p, _png(512, 512))
+            z.writestr("Metadata/plate_%d_small.png" % p, _png(128, 128))
         z.writestr("[Content_Types].xml", CONTENT_TYPES)
         z.writestr("_rels/.rels", RELS)
     return path

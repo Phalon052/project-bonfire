@@ -36,6 +36,7 @@ Standing rules for printing: the printer, slicer settings in Bambu Studio, print
 | A part standing on feet **under 10 mm square** | A part with a base **larger than about 30 × 30 mm**, even if it is about **3× as tall** as the base is wide |
 
 - ✅ **Raft layers: 2** when a raft is on (Bambu's default is 0, meaning off).
+- ✅ **Supports and rafts print in the part's own filament** (2026-09-19) — never a second filament or colour. Set per part (`support_filament` / `support_interface_filament` = the part's filament) whenever supports or a raft are on.
 
 ### Other support settings to consider approving [Fill out]
 
@@ -65,7 +66,8 @@ Always orient parts for printing before export; don't leave it for manual orient
 When requested to get something ready to print:
 
 - Make a **.3MF**, named the same as the STLs, in the project's `3mf/` folder (see `01_blender_basics.md` → section 2).
-- **Place each part as many times as its Quantity** in `specifications.md` (identical parts have one STL, so the copies are made here). If the copies don't fit on one plate, say so and ask. Quantity `n`: place one unless a number is given in the request.
+- **Place each part as many times as its Quantity** in `specifications.md` (identical parts have one STL, so the copies are made here). If the copies don't fit on one plate, they go on as many plates as it takes, in the same 3MF (fewest plates by default; *shortest time* groups tall parts). Quantity `n`: place one unless a number is given in the request.
+- ✅ **One filament per plate — no multicolour by default** (2026-09-19). Parts in different filaments (type, brand **or** colour, e.g. *Overture PLA black* vs *PLA yellow*) go on separate plates, so the AMS never swaps mid-print (no purge waste or extra time). A multicolour plate only when asked for.
 - Use **default** print settings, changing only what the approved list in section 2 allows.
 - **Assign each part's filament** from the drawing's `MAT:` marker, or the default material.
 - ✅ **AMS slots:** read what's loaded in the AMS each time and map each part's filament to a slot holding that material. If a needed material isn't loaded, say which one and ask. (Needs the printer connection; see section 7.)
