@@ -29,7 +29,7 @@ A Claude (Cowork) workspace for designing 3D-printable parts in **Blender** and 
 | `01`–`04_*.md` | Standing rules: Blender, drawings, materials and fit clearances, Bambu printing |
 | `catalog/model library/` | One folder per project (`blend/`, `stl/`, `3mf/`, `references/`) |
 | `catalog/hardware inventory/` | Hardware on hand, reservations and shopping list |
-| `tools/` | `paths.py` (folders and file names), `inventory.py` (hardware counts), `env.py` (machine-local settings) |
+| `tools/` | `paths.py` (folders and file names), `inventory.py` (hardware counts), `env.py` (machine-local settings), `bambu_*.py` (the Bambu MCP: build, slice, printer status; `bambu_mcp.py` is the server) |
 | `.env.example` | Template for `.env`: where this folder and Blender live on your machine. `.env` itself is gitignored |
 | `plugins/` | Notes on the Blender add-ons used (BoltFactory, Extra Mesh Objects) |
 
@@ -56,7 +56,7 @@ Or use a command:
 
 - Claude desktop app (Cowork) with this folder connected
 - Blender with the Blender MCP add-on running
-- Bambu Lab P1S with AMS (Bambu Studio MCP in progress; see the roadmap below)
+- Bambu Lab P1S with AMS, Bambu Studio 2.0+, and Python 3.11+ for the Bambu tools (setup in [`USER_GUIDE.md`](USER_GUIDE.md#bambu-printer-setup-once-per-pc))
 
 ## Roadmap
 

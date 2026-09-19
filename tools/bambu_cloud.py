@@ -616,6 +616,17 @@ def parse_ams(pr):
     return slots
 
 
+def parse_ams_settings(pr):
+    """The AMS switches from Studio's Device tab → AMS Settings, as the printer
+    reports them. None when the report doesn't carry that switch."""
+    ams = pr.get("ams") if isinstance(pr.get("ams"), dict) else {}
+    def flag(key):
+        return None if key not in ams else bool(ams.get(key))
+    return {"update_remaining": flag("calibrate_remain_flag"),
+            "read_on_insert": flag("insert_flag"),
+            "read_on_power_on": flag("power_on_flag")}
+
+
 def _colour(rgba):
     """AMS colours come as RRGGBBAA; Studio and the presets use #RRGGBB."""
     if not rgba:
@@ -660,6 +671,7 @@ def parse_status(pr, device=None):
         "errors": [{"code": c, "help": hms_url(c)} for c in hms],
         "print_error": pr.get("print_error") or 0,
         "ams": parse_ams(pr),
+        "ams_settings": parse_ams_settings(pr),
         # Firmware 01.08.02+ can require signed commands, which would block
         # pause/resume/stop from here. Read-only status is unaffected.
         "commands_need_signing": bool(fun_bits & 0x20000000),
@@ -717,16 +729,21 @@ def format_status(s):
             else:
                 unknown += 1
             lines.append("    slot %s: %s %s%s" % (t["slot"], name, t["colour"], left))
-        if unknown:
+        on = (s.get("ams_settings") or {}).get("update_remaining")
+        if on is False:
+            lines.append("    (\"Update remaining capacity\" is off — turn it on in "
+                         "Bambu Studio: Device tab → AMS Settings, so Bambu RFID "
+                         "spools report how much is left)")
+        elif unknown:
             lines.append("    (amount left isn't reported for %s — the AMS only "
-                         "tracks Bambu RFID spools, and only with \"update "
-                         "remaining filament\" on in the printer's AMS settings)"
+                         "tracks Bambu RFID spools; third-party spools never report it)"
                          % ("any slot" if unknown == len([t for t in s["ams"]
                                                           if t["loaded"]])
                             else "%d slot%s" % (unknown, "" if unknown == 1 else "s")))
     if s.get("commands_need_signing"):
-        lines.append("  note: this firmware asks for signed commands, which may "
-                     "block pause/stop from here (status is fine)")
+        lines.append("  note: this firmware wants signed commands, so pause / "
+                     "resume / stop go through Bambu Studio's Device tab, Handy "
+                     "or the screen (status is fine)")
     return "\n".join(lines)
 
 

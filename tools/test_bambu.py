@@ -839,6 +839,19 @@ def main():
     else:
         note("skipped", "no tools/bambu_template.3mf here")
 
+    print("\n== AMS settings read from the report ==")
+    st_ = bc["parse_ams_settings"]({"ams": {"ams": [], "calibrate_remain_flag": False,
+                                           "insert_flag": True, "power_on_flag": True}})
+    check("update-remaining off is seen", st_["update_remaining"], False)
+    check("insert read is seen", st_["read_on_insert"], True)
+    check("a report without the switch says unknown",
+          bc["parse_ams_settings"]({})["update_remaining"], None)
+    txt = bc["format_status"](bc["parse_status"]({"gcode_state": "IDLE", "ams": {
+        "ams": [{"id": "0", "tray": [{"id": "0", "tray_type": "PLA", "tray_color": "FFFFFFFF",
+                                     "remain": -1}]}],
+        "calibrate_remain_flag": False, "insert_flag": True, "power_on_flag": True}}))
+    check("status says where to turn it on", "AMS Settings" in txt, True)
+
     print("\n== Studio version that can start prints ==")
     _bs = runpy.run_path(os.path.join(HERE, "bambu_slice.py"))
     check("1.9.7.52 can't start prints", _bs["studio_can_print"]("01.09.07.52"), False)
