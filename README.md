@@ -28,25 +28,6 @@ A Claude (Cowork) workspace for designing 3D-printable parts in **Blender** and 
 | `.env.example` | Template for `.env`: where this folder and Blender live on your machine. `.env` itself is gitignored |
 | `plugins/` | Notes on the Blender add-ons used (BoltFactory, Extra Mesh Objects) |
 
-## Quick examples
-
-Ask in plain words:
-
-```text
-Make a 6 mm × 20 mm peg that press-fits into a matching hole, in PLA Basic.
-This drawing is for a friend: a letter board letter set.
-Get the shelf bracket ready to print.
-```
-
-Or use a command:
-
-```text
-/bf-add 50 M4 x 12 socket head screws, reorder at 10
-/bf-find m4 socket
-/bf-commit shelf bracket
-/bf-done shelf bracket
-```
-
 ## Requirements
 
 - Claude desktop app (Cowork) with this folder connected
