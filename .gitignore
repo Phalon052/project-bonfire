@@ -29,6 +29,9 @@ Claude outputs*/
 env
 *.key
 tools/bambu_config.local.json
+# Bambu Cloud sign-in token (tools/bambu_cloud.py login)
+tools/bambu_cloud.local.json
+tools/bambu_cloud.local.json.tmp
 
 # ── Python ───────────────────────────────────────────────────
 __pycache__/

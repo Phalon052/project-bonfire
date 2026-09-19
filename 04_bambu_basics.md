@@ -110,9 +110,22 @@ Applies to the Bambu Studio MCP (plan: `BAMBU_MCP_PLAN.md`).
 - **Starting a print.** Show the summary first (file, plate, filament per AMS slot, print time, filament used), then wait for a yes. Never start one without it, even if asked earlier in the conversation.
 - Pausing is fine when asked; **stopping** a print needs a yes.
 
-**Printer connection (Developer Mode)**
+**Printer connection (Bambu Cloud)** ✅
 
-- ✅ Developer Mode may be used. It is switched on and off with the `/bf-printer-mode` command.
-- It can only be changed on the printer's screen (Settings → WLAN/Network: turn on **LAN-only Mode**, then **Developer Mode**). The command checks the current state and gives the steps. While it's on, cloud printing and the Bambu Handy app don't work.
-- When Developer Mode is off: slicing still works; to print, open the sliced file in Bambu Studio for you to send.
+- ✅ **Decided 2026-09-18: the printer is reached through Bambu Cloud**, not over the LAN. The printer stays signed in to the Bambu account, with **LAN-only Mode off** and **Developer Mode off** — either one turns the cloud off. The Handy app and printing from away keep working.
+- This replaces the earlier Developer Mode decision. There is no `/bf-printer-mode` command.
+- **What cloud can do:** printer status, the AMS contents, pause, resume, stop, and starting a file that is already on the printer's SD card.
+- **What cloud cannot do:** there is no way to send a sliced file to the printer over the cloud — no such endpoint exists. Sliced files reach the printer through Bambu Studio or the Handy app. The camera is also LAN-only on a P1S.
+- So the flow is: this project builds and slices the file, you send it with Bambu Studio, and the MCP watches and controls the print from there. If sending files automatically ever matters more than the Handy app does, that needs the printer's LAN address and access code, and the LAN path would have to be built.
+- Signing in uses the account email and password and usually an emailed verification code. The token lasts about three months and cannot be refreshed, so signing in again is a hands-on step.
 
+## 8. Building the print file ✅
+
+The Bambu MCP (`tools/bambu.py`, `tools/bambu_slice.py`, `tools/bambu_mcp.py`) applies sections 2, 3, 4 and 7 itself. Worth knowing:
+
+- **Supports are judged by the drop underneath, not just the angle.** A surface shallower than 30 degrees only gets support when there is a real gap under it. The underside of a printed thread is shallow but lands on the turn below, so a screw printed upright gets no support. Lettering, hole facets and other patches under about 2 mm² are ignored.
+- **Orientation follows section 3 in order:** a load-bearing name keeps the orientation it was modelled in; otherwise the largest flat face goes down, and fewest supports only decides between ways up that sit on a comparable amount of bed.
+- **`tools/bambu_template.3mf`** is a project saved from Bambu Studio with the P1S presets selected. Every setting this project doesn't touch is copied from it, so the file matches Bambu's defaults exactly. Without it the presets are built from scratch — workable, but not identical, and the report says so.
+- **Plate layout** uses Bambu Studio's own Arrange when Studio is installed and no part has a raft, keeping each part's way up. With a raft, a custom spacing, or no Studio, the project's own packer lays the plate out instead: centred, with room for each part's brim and raft, and clear of the P1S's no-print corner (18 × 28 mm, front-left). Studio's command-line Arrange ignores a raft's spread, which makes rafted parts' first layers collide.
+- **Sliced files** go in the project's `3mf/` folder as `<name>_<n>.gcode.3mf`, never overwriting. The slice report gives print time, filament per slot in grams and metres, whether support was generated, and whether any toolpath falls outside the printable area.
+- **Preset names:** machine `Bambu Lab P1S 0.4 nozzle`, process `0.20mm Standard @BBL X1C` (the P1S shares the X1C process family — there are no `@BBL P1S` process presets). Filament preset names differ between Studio versions, so each material lists the names it might have and the one actually installed is used.
