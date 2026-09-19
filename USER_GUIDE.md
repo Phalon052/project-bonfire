@@ -74,18 +74,28 @@ are examples: use wherever your Project Bonfire folder and Python actually are.
    - For third-party rolls, set the slot to the brand's own preset (e.g. *Overture PLA*), not
      *Generic PLA*, so the tools can tell what's loaded.
 
-8. **Print watch (optional).** Checks the camera every few minutes while a print runs and pops
-   up a window on this PC if something looks wrong. Add `ANTHROPIC_API_KEY=` to `.env` (a
-   Claude API key from console.anthropic.com, billed separately, about a tenth of a cent per
-   check), then:
-   ```powershell
-   python tools\bambu_watch.py once       # one check now, to try it
-   python tools\bambu_watch.py install    # start hidden with Windows, and start now
-   python tools\bambu_watch.py status     # installed? running? last checks
-   ```
-   It can't pause the print itself (the firmware refuses), so the pop-up says to pause it in
-   Studio's Device tab, Handy or on the screen. Pictures are kept in `tools\camera_snapshots\`
-   (git-ignored); problem pictures in its `problems\` folder.
+8. **Print watch (optional).** While a print runs, takes a camera picture every 5 minutes, has
+   a failure detector look at it, and pops up a window on this PC if something looks wrong.
+   The detector is Obico's open-source spaghetti detector, running locally in Docker: free, no
+   account, nothing leaves the PC.
+   1. Install **Docker Desktop** (docker.com), start it, and in its Settings → General tick
+      *Start Docker Desktop when you sign in*.
+   2. Optional: put a long random string in `.env` as `OBICO_ML_TOKEN=` so only the watch can
+      use the detector.
+   3. From the Project Bonfire folder:
+      ```powershell
+      python tools\bambu_watch.py obico up     # first time: downloads ~1-2 GB, a few minutes
+      python tools\bambu_camera.py snapshot    # a picture to test with
+      python tools\bambu_watch.py obico test   # the detector scores it (0 = nothing wrong)
+      python tools\bambu_watch.py install      # start the watch hidden with Windows, and now
+      python tools\bambu_watch.py status       # installed? running? detector answering?
+      ```
+   The watch sleeps while the printer is idle. It can't pause the print itself (the firmware
+   refuses), so the pop-up says to pause in Studio's Device tab, Handy or on the screen, and
+   *Yes* opens the picture and Studio. Pictures go to `tools\camera_snapshots\` (git-ignored),
+   problem pictures to its `problems\` folder, and a log to `watch.log` there. Timing and
+   sensitivity: `camera_watch` in `tools\bambu_config.json` (`interval_min`, `alert_score`,
+   `spike_score`; lower scores = more sensitive).
 
 Optional, in `.env` (see `.env.example`): `BAMBU_PRINTER_SERIAL` if the account has more
 than one printer, `BAMBU_PRINTER_IP` if the printer isn't found on the network by itself,
