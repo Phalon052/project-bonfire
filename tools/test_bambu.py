@@ -19,6 +19,7 @@ bs = runpy.run_path(os.path.join(HERE, "bambu_slice.py"))
 bc = runpy.run_path(os.path.join(HERE, "bambu_cloud.py"))
 bl = runpy.run_path(os.path.join(HERE, "bambu_lan.py"))
 bpr = runpy.run_path(os.path.join(HERE, "bambu_print.py"))
+bpre = runpy.run_path(os.path.join(HERE, "bambu_presets.py"))
 
 FAILURES = []
 
@@ -838,6 +839,22 @@ def main():
         note("report", bpr["format_retarget"](r).splitlines()[1])
     else:
         note("skipped", "no tools/bambu_template.3mf here")
+
+    print("\n== matching project filaments to the rolls in the AMS ==")
+    ams_now = [
+        {"slot": 1, "loaded": True, "type": "PLA", "colour": "#161616", "filament_id": "GFA00"},
+        {"slot": 2, "loaded": True, "type": "PLA", "colour": "#FFF144", "filament_id": "GFL99"},
+        {"slot": 3, "loaded": True, "type": "PLA", "colour": "#000000", "filament_id": "GFL04"},
+        {"slot": 4, "loaded": True, "type": "PETG", "colour": "#515151", "filament_id": "GFG02"}]
+    mp = bpre["match_loaded_slots"]
+    check("Bambu PLA Basic -> the Bambu roll", [r["slot"] for r in mp(["Bambu PLA Basic"], ams_now)], [1])
+    check("Overture PLA -> the Overture roll", [r["slot"] for r in mp(["Overture PLA"], ams_now)], [3])
+    check("PETG -> the PETG roll", [r["slot"] for r in mp(["PETG"], ams_now)], [4])
+    check("two PLAs get two different rolls",
+          [r["slot"] for r in mp(["Bambu PLA Basic", "PLA"], ams_now)], [1, 2])
+    check("nothing loaded of that type", mp(["ABS"], ams_now), [None])
+    check("empty slots are skipped",
+          mp(["PLA"], [{"slot": 1, "loaded": False, "type": "", "colour": ""}]), [None])
 
     print("\n== AMS settings read from the report ==")
     st_ = bc["parse_ams_settings"]({"ams": {"ams": [], "calibrate_remain_flag": False,

@@ -92,6 +92,16 @@ MATERIAL_ALIASES = {
     "GENERIC PETG": "PETG",
 }
 
+# The filament_id the AMS reports for a slot set to a third-party brand's own
+# preset (Studio's system presets). Used to find that brand's roll in the AMS.
+BRAND_FILAMENT_IDS = {
+    "OVERTURE PLA": "GFL04",
+    "OVERTURE MATTE PLA": "GFL05",
+    "OVERTURE PLA MATTE": "GFL05",
+    "GENERIC PLA": "GFL99",
+    "GENERIC PETG": "GFG99",
+}
+
 DEFAULT_MATERIAL = "PLA"
 TEMPLATE_NAME = "bambu_template.3mf"
 
@@ -249,3 +259,27 @@ def project_settings(root=None, materials=None, overrides=None,
 
     return (minimal_project_settings(materials, overrides, process, installed),
             "minimal", None)
+
+
+def match_loaded_slots(materials, loaded):
+    """
+    For each material (slot order), the AMS slot currently holding a roll of
+    it, or None. `loaded` is bambu_cloud.parse_ams() output. Best match first:
+    the exact filament (its filament_id — Bambu PLA Basic, or a third-party
+    brand's own preset), then the same type (PLA, PETG...). A roll is given
+    to one material only, and the lowest slot wins a tie.
+    """
+    rolls = [t for t in (loaded or []) if t.get("loaded") and t.get("type")]
+    taken, out = set(), []
+    for m in materials:
+        key = " ".join(str(m or "").upper().replace("-", " ").split())
+        entry = FILAMENTS[resolve_material(m)]
+        want_id = BRAND_FILAMENT_IDS.get(key) or entry["id"]
+        free = [t for t in rolls if str(t["slot"]) not in taken]
+        hit = (next((t for t in free if t.get("filament_id") == want_id), None)
+               or next((t for t in free
+                        if str(t["type"]).upper() == entry["type"]), None))
+        if hit:
+            taken.add(str(hit["slot"]))
+        out.append(hit)
+    return out

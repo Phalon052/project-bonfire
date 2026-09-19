@@ -746,10 +746,21 @@ def newest_exports(folder, ext="stl"):
 
 # ── building the print 3MF (04 section 4) ────────────────────────────
 
+def live_ams():
+    """What's loaded in the AMS right now, over Bambu Cloud — or None when the
+    printer can't be asked (not signed in, offline, no network)."""
+    try:
+        bc = runpy.run_path(os.path.join(_HERE, "bambu_cloud.py"))
+        status = bc["printer_status"]()
+        return status.get("ams") if status.get("state") != "offline" else None
+    except Exception:
+        return None
+
+
 def build_print_3mf(project, parts=None, material=None, material_overrides=None,
                     settings=None, user_requested=None, spacing_mm=None,
                     orient_mode="auto", process=None, out_path=None,
-                    arrange="auto", studio_exe=""):
+                    arrange="auto", studio_exe="", ams="auto"):
     """
     The main Layer A tool: newest STL of each part, oriented, copied to its
     Quantity, packed on the plate, with filament and the approved settings
@@ -761,6 +772,11 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
              spacing was asked for, otherwise ours. Studio's command line
              always uses its own default spacing, so a custom spacing_mm
              means ours.
+
+    ams: "auto" (default) reads the loaded rolls from the printer and gives
+         each filament the colour of the roll that will print it, so Studio's
+         send dialog picks that AMS slot by itself; a parse_ams() list uses
+         that instead; None skips it (the template's colours stay).
 
     Returns a report dict. Writes one file and nothing else.
     """
@@ -821,16 +837,18 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
         if settings:
             per_part.update(guard_settings(settings, user_requested))
 
-        mat = bpre["resolve_material"](overrides.get(part, project_material))
+        raw_mat = overrides.get(part, project_material)
+        mat = bpre["resolve_material"](raw_mat)
         entries.append({"part": part, "stl": stl, "mesh": m, "settings": per_part,
-                        "material": mat, "quantity": max(1, quantities.get(part, 1)),
+                        "material": mat, "material_name": raw_mat, "quantity": max(1, quantities.get(part, 1)),
                         "size": size, "supports": sup, "raft": raft})
 
     # 2. One AMS slot per distinct material, in first-seen order.
-    materials = []
+    materials, material_names = [], []
     for e in entries:
         if e["material"] not in materials:
             materials.append(e["material"])
+            material_names.append(e["material_name"] or e["material"])
     if len(materials) > 4:
         return {"ok": False, "error":
                 "%d different materials, but the AMS holds 4: %s"
@@ -881,6 +899,26 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
     proj_settings, source, application = bpre["project_settings"](
         ROOT, materials=materials,
         process=process or bpre["PROCESS_PRESET"])
+    # Colour each filament like the roll that will print it, so Studio's send
+    # dialog maps it to that AMS slot instead of guessing by colour.
+    loaded = live_ams() if ams == "auto" else (ams or None)
+    rolls = []
+    if loaded:
+        rolls = bpre["match_loaded_slots"](material_names, loaded)
+        colours = list(proj_settings.get("filament_colour") or [])
+        for i, roll in enumerate(rolls):
+            if roll and roll.get("colour") and i < len(colours):
+                colours[i] = roll["colour"]
+                notes.append("filament %d (%s): coloured %s to match AMS slot %s"
+                             % (i + 1, material_names[i], roll["colour"], roll["slot"]))
+            elif i < len(colours):
+                warnings.append("No %s roll is loaded in the AMS — load one, or "
+                                "pick the slot by hand in Studio's send dialog."
+                                % material_names[i])
+        proj_settings["filament_colour"] = colours
+    elif ams == "auto":
+        notes.append("Couldn't read the AMS, so filament colours are the "
+                     "template's; pick the slot in Studio's send dialog.")
     if source == "minimal":
         warnings.append(
             "No tools/bambu_template.3mf, so the presets were built from "
@@ -944,6 +982,10 @@ def build_print_3mf(project, parts=None, material=None, material_overrides=None,
         "process_preset": process or bpre["PROCESS_PRESET"],
         "ams_slots": {str(i + 1): preset for i, preset in
                       enumerate(proj_settings.get("filament_settings_id", []))},
+        "loaded_rolls": {str(i + 1): (r and {"ams_slot": r["slot"],
+                                            "colour": r["colour"],
+                                            "filament_id": r.get("filament_id")})
+                         for i, r in enumerate(rolls)},
         "parts": [{"part": it["name"], "copies": len(it["instances"]),
                    "material": next(x["material"] for x in entries
                                     if x["part"] == it["name"]),
@@ -1002,14 +1044,18 @@ def format_report(report):
     elif plate:
         lines.append("  Plate laid out here, centred, with room for each "
                      "part's brim and raft")
+    rolls = report.get("loaded_rolls") or {}
     for slot, preset in sorted(report["ams_slots"].items()):
-        lines.append("  AMS slot %s: %s" % (slot, preset))
+        roll = rolls.get(slot)
+        where = (" ← AMS slot %s (%s)" % (roll["ams_slot"], roll["colour"])
+                 if roll else "")
+        lines.append("  filament %s: %s%s" % (slot, preset, where))
     lines.append("")
     for p in report["parts"]:
         changed = p["settings_changed"]
         extra = (", ".join("%s=%s" % kv for kv in sorted(changed.items()))
                  if changed else "Bambu defaults, nothing changed")
-        lines.append("  %s x%d  (%s, slot %s) — %s"
+        lines.append("  %s x%d  (%s, filament %s) — %s"
                      % (p["part"], p["copies"], p["material"], p["ams_slot"], extra))
     if report.get("notes"):
         lines.append("")
