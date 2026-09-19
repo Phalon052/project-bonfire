@@ -66,7 +66,8 @@ TOOLS = os.path.join(ROOT, "tools")
 # parameter still needs a restart: the app reads those once, at start.)
 _MODULES = {"bb": "bambu.py", "b3": "bambu_3mf.py", "bpre": "bambu_presets.py",
             "bsl": "bambu_slice.py", "bcl": "bambu_cloud.py",
-            "blan": "bambu_lan.py", "bpr": "bambu_print.py", "bp": "paths.py"}
+            "blan": "bambu_lan.py", "bpr": "bambu_print.py", "bp": "paths.py",
+            "bcam": "bambu_camera.py", "bw": "bambu_watch.py"}
 _LOADED_AT = [0.0]
 
 
@@ -87,7 +88,7 @@ def _fresh():
     return True
 
 
-bb = b3 = bpre = bsl = bcl = blan = bpr = bp = None
+bb = b3 = bpre = bsl = bcl = blan = bpr = bp = bcam = bw = None
 _fresh()
 
 CONFIG_PATH = os.path.join(TOOLS, "bambu_config.json")
@@ -125,6 +126,11 @@ def write_config(cfg):
 
 
 # ── the server ───────────────────────────────────────────────────────
+
+try:
+    from mcp.server.fastmcp import Image as McpImage  # a picture Claude can see
+except ImportError:                                   # pragma: no cover
+    McpImage = None
 
 try:
     from mcp.server.fastmcp import FastMCP            # MCP SDK 1.x
@@ -720,8 +726,95 @@ def _guard(fn, *a, **kw):
     """Run a print-side call and turn the expected refusals into JSON."""
     try:
         return fn(*a, **kw)
-    except (bpr["PrintError"], bcl["CloudError"], blan["LanError"]) as exc:
+    except (bpr["PrintError"], bcl["CloudError"], blan["LanError"],
+            bcam["CameraError"]) as exc:
         return {"ok": False, "error": str(exc)}
+
+
+def _with_picture(report, path):
+    """The report as JSON, plus the picture itself so Claude can look at it."""
+    out = [_ok(report)]
+    if McpImage is not None and path and os.path.isfile(path):
+        with open(path, "rb") as fh:
+            out.append(McpImage(data=fh.read(), format="jpeg"))
+    return out
+
+
+@mcp.tool()
+def camera_snapshot(save_to: str = ""):
+    """
+    One picture from the P1S camera, over the home network, returned so you
+    can see it. Saved in tools/camera_snapshots/ (newest 20 kept), or at
+    save_to — e.g. a project's references/ folder when the person wants it
+    kept. Read-only: nothing is sent to the printer except the camera login.
+    The chamber light is the printer's own; a dark picture means it's off.
+    """
+    r = _guard(bcam["snapshot"], save_to or None)
+    return _with_picture(r, r.get("file"))
+
+
+@mcp.tool()
+def camera_check():
+    """
+    One print check (the camera watch uses this). Reads the printer's status
+    first; only while it's printing does it take a picture. Look at the
+    picture for: spaghetti (loose strands), a part knocked loose or moved,
+    a layer shift, blobs or a nozzle clog (nothing coming out), and anything
+    on the bed that shouldn't be. Then say plainly: OK, or the problem and how
+    sure you are. Never stop or pause the print from here — tell the person,
+    who stops it on the screen or in Handy (04 section 7).
+    """
+    status = _guard(bcl["printer_status"])
+    state = status.get("state")
+    brief = {k: status.get(k) for k in ("printer", "state", "job", "progress_pct",
+                                        "layer", "total_layers", "remaining_min",
+                                        "errors", "error")}
+    if status.get("ok") is False or not state:
+        brief["checked"] = False
+        brief["note"] = "Couldn't read the printer's status, so no picture was taken."
+        return _ok(brief)
+    if state not in ("printing", "paused", "preparing"):
+        brief["checked"] = False
+        brief["note"] = ("Not printing (%s), so no picture was taken." % state)
+        return _ok(brief)
+    shot = _guard(bcam["snapshot"])
+    brief["checked"] = bool(shot.get("ok"))
+    brief["snapshot"] = shot.get("file")
+    if not shot.get("ok"):
+        brief["camera_error"] = shot.get("error")
+    return _with_picture(brief, shot.get("file"))
+
+
+@mcp.tool()
+def camera_watch(action: str = "status") -> str:
+    """
+    The background print watch on this PC (tools/bambu_watch.py): a picture
+    every few minutes while printing, judged by a small Claude model through
+    the Claude API; on a problem it tries to pause (the P1S firmware refuses)
+    and pops up a window. action: status | once (one check now) | install
+    (start with Windows, and start now) | uninstall | on | off.
+    Settings: "camera_watch" in bambu_config (interval_min, act_on, model...).
+    """
+    if action == "status":
+        return _ok({"ok": True, "report": bw["status_report"]()})
+    if action == "once":
+        try:
+            r = bw["check_once"]({})
+        except Exception as exc:
+            return _fail(str(exc))
+        return _ok({k: v for k, v in r.items()})
+    if action == "install":
+        return _ok({"ok": True, "report": bw["install"]()})
+    if action == "uninstall":
+        return _ok({"ok": True, "report": bw["uninstall"]()})
+    if action in ("on", "off"):
+        cfg = read_config()
+        cw = dict(cfg.get("camera_watch") or {})
+        cw["enabled"] = action == "on"
+        cfg["camera_watch"] = cw
+        write_config(cfg)
+        return _ok({"ok": True, "camera_watch": cw})
+    return _fail("action must be status, once, install, uninstall, on or off")
 
 
 @mcp.tool()

@@ -74,6 +74,19 @@ are examples: use wherever your Project Bonfire folder and Python actually are.
    - For third-party rolls, set the slot to the brand's own preset (e.g. *Overture PLA*), not
      *Generic PLA*, so the tools can tell what's loaded.
 
+8. **Print watch (optional).** Checks the camera every few minutes while a print runs and pops
+   up a window on this PC if something looks wrong. Add `ANTHROPIC_API_KEY=` to `.env` (a
+   Claude API key from console.anthropic.com, billed separately, about a tenth of a cent per
+   check), then:
+   ```powershell
+   python tools\bambu_watch.py once       # one check now, to try it
+   python tools\bambu_watch.py install    # start hidden with Windows, and start now
+   python tools\bambu_watch.py status     # installed? running? last checks
+   ```
+   It can't pause the print itself (the firmware refuses), so the pop-up says to pause it in
+   Studio's Device tab, Handy or on the screen. Pictures are kept in `tools\camera_snapshots\`
+   (git-ignored); problem pictures in its `problems\` folder.
+
 Optional, in `.env` (see `.env.example`): `BAMBU_PRINTER_SERIAL` if the account has more
 than one printer, `BAMBU_PRINTER_IP` if the printer isn't found on the network by itself,
 and `BAMBU_STUDIO_PATH` if Studio isn't in the usual place.

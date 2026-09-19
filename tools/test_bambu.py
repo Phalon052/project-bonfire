@@ -9,6 +9,7 @@ import sys
 import base64
 import json
 import tempfile
+import time
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -20,6 +21,8 @@ bc = runpy.run_path(os.path.join(HERE, "bambu_cloud.py"))
 bl = runpy.run_path(os.path.join(HERE, "bambu_lan.py"))
 bpr = runpy.run_path(os.path.join(HERE, "bambu_print.py"))
 bpre = runpy.run_path(os.path.join(HERE, "bambu_presets.py"))
+bcam = runpy.run_path(os.path.join(HERE, "bambu_camera.py"))
+bw = runpy.run_path(os.path.join(HERE, "bambu_watch.py"))
 
 FAILURES = []
 
@@ -877,6 +880,94 @@ def main():
     check("second copy moved onto plate 2",
           "435.2 128 0" in mdl_ and " 128 128 0\"" in mdl_, True)
     check("a thumbnail per plate", "Metadata/plate_2.png" in names_, True)
+
+    print("\n== the P1S camera (port 6000) ==")
+    pkt = bcam["auth_packet"]("12345678")
+    check("login packet is 80 bytes", len(pkt), 80)
+    check("...starts 0x40, 0x3000", struct.unpack("<II", pkt[:8]), (0x40, 0x3000))
+    check("...user then code, each padded to 32",
+          (pkt[16:20], pkt[48:56], pkt[56:80].strip(b"\x00")), (b"bblp", b"12345678", b""))
+    jpeg = b"\xff\xd8" + b"picture" * 50 + b"\xff\xd9"
+    frame = lambda body: struct.pack("<IIII", len(body), 0, 1, 0) + body
+    stream = frame(b"\x00broken\x00") + frame(jpeg)
+    chunks = [stream[i:i + 37] for i in range(0, len(stream), 37)]
+    got = bcam["read_frame"](lambda n: chunks.pop(0) if chunks else b"", time.time() + 5)
+    check("a frame split across reads comes back whole, a broken one skipped", got, jpeg)
+    try:
+        bcam["read_frame"](lambda n: b"", time.time() + 5)
+        check("a hang-up is reported", False, True)
+    except bcam["CameraError"] as exc:
+        check("a hang-up is reported, pointing at LAN liveview", "Liveview" in str(exc), True)
+
+    class FakeSock:
+        def __init__(self, data):
+            self.data = [data[i:i + 100] for i in range(0, len(data), 100)]
+        def settimeout(self, t):
+            pass
+        def recv(self, n):
+            return self.data.pop(0) if self.data else b""
+        def close(self):
+            pass
+    sent = []
+    shot = bcam["snapshot"](os.path.join(tmp, "cam", "shot.jpg"),
+                            lan={"ip": "192.168.1.9", "_code": "secret99"},
+                            _connect_fn=lambda ip, code, t: sent.append((ip, code)) or FakeSock(frame(jpeg)))
+    check("snapshot saved", open(shot["file"], "rb").read(), jpeg)
+    check("the access code isn't in the result", "secret99" in json.dumps(shot), False)
+    check("connected with the resolved address", sent, [("192.168.1.9", "secret99")])
+
+    print("\n== the print watch ==")
+    pv = bw["parse_verdict"]
+    check("plain JSON answer", pv('{"verdict":"ok","problem":"","confidence":0.05}')["verdict"], "ok")
+    check("JSON inside a code fence",
+          pv('```json\n{"verdict":"problem","problem":"spaghetti","confidence":0.9}\n```')["problem"],
+          "spaghetti")
+    check("nonsense answer is 'unsure', not 'ok'", pv("I think it's fine")["verdict"], "unsure")
+    check("confidence is clamped", pv('{"verdict":"problem","confidence":7}')["confidence"], 1.0)
+    posted = []
+    pic = os.path.join(tmp, "cam", "shot.jpg")
+    v = bw["judge"](pic, {"job": "nut", "progress_pct": 40, "layer": 20, "total_layers": 50},
+                    previous=pic, model="m", key="k",
+                    _post=lambda body: posted.append(body) or {"content": [
+                        {"type": "text", "text": '{"verdict":"ok","problem":"","confidence":0.1}'}]})
+    check("judge sends the previous and current picture",
+          [c["type"] for c in posted[0]["messages"][0]["content"]], ["image", "image", "text"])
+    check("...and reads the answer", v["verdict"], "ok")
+
+    gw = bw["check_once"].__globals__            # keep test lines out of the real log
+    gw["SNAP_DIR"] = os.path.join(tmp, "watch")
+    gw["LOG_PATH"] = os.path.join(tmp, "watch", "watch.log")
+    cfg_w = dict(bw["DEFAULTS"])
+    printing = lambda layer=10: (lambda: {"state": "printing", "job": "nut", "layer": layer,
+                                          "total_layers": 50, "progress_pct": 20})
+    shot_fn = lambda: {"file": pic}
+    acted = []
+    act_fn = lambda verdict, status, picture, cfg: acted.append(verdict) or {"paused": False}
+    r = bw["check_once"]({}, cfg_w, _status=lambda: {"state": "idle"})
+    check("idle: no picture, sleeps idle_poll_min", (r["checked"], r["next_in_s"]), (False, 180.0))
+    r = bw["check_once"]({}, cfg_w, _status=printing(1), _snapshot=shot_fn)
+    check("first layer: waits, no picture yet", r["checked"], False)
+    st = {}
+    r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn,
+                         _judge=lambda *a: {"verdict": "ok", "problem": "", "confidence": 0.1},
+                         _act=act_fn)
+    check("ok: next picture in interval_min", (r["next_in_s"], acted), (420.0, []))
+    check("the picture is kept for the next comparison", st.get("previous"), pic)
+    r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn,
+                         _judge=lambda *a: {"verdict": "problem", "problem": "spaghetti",
+                                            "confidence": 0.8}, _act=act_fn)
+    check("problem: acted on (pause tried, pop-up)", [a["problem"] for a in acted], ["spaghetti"])
+    acted.clear()
+    unsure = lambda *a: {"verdict": "unsure", "problem": "blurry blob?", "confidence": 0.6}
+    r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn, _judge=unsure, _act=act_fn)
+    check("unsure: looks again in a minute before acting", (r["next_in_s"], acted), (60.0, []))
+    r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn, _judge=unsure, _act=act_fn)
+    check("still unsure the second time: acted on", len(acted), 1)
+    acted.clear()
+    r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn,
+                         _judge=lambda *a: {"verdict": "problem", "problem": "maybe",
+                                            "confidence": 0.3}, _act=act_fn)
+    check("low-confidence problem: logged, not acted on", acted, [])
 
     print("\n== more than one filament in project_settings (Studio 2.x layout) ==")
     proot = os.path.join(tmp, "presets")
