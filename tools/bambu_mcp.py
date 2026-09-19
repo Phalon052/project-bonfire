@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-Project Bonfire — Bambu MCP server (Layers A, B and read-only C).
+Project Bonfire — Bambu MCP server (Layers A, B and C).
 
 Exposes the tools in `bambu.py` and `bambu_slice.py` over MCP so Claude can
 inspect models, decide supports and rafts, orient parts, pack the plate, build
 a real Bambu Studio project 3MF, and slice it — all inside the rules in
 `04_bambu_basics.md`.
 
-It can also read the P1S over Bambu Cloud — status, errors, AMS — but it never
-pauses, stops or starts anything yet (Phase 4), and it never signs in: the
-password is only ever typed in a terminal (`python tools/bambu_cloud.py login`),
-so it can't pass through Claude.
+It also runs the P1S: status over Bambu Cloud, files onto the printer over the
+home network, and start / pause / resume / stop. Starting and stopping need the
+person's yes (04_bambu_basics.md section 7) — enforced by a one-time code from
+print_preview, not by the chat app. It never signs in: the password is only
+ever typed in a terminal (`python tools/bambu_cloud.py login`).
 
 Install and run:
 
-    pip install "mcp[cli]"
+    python -m pip install "mcp[cli]<2"
     python tools/bambu_mcp.py
 
 Register it in the Claude desktop app alongside the Blender MCP:
@@ -62,6 +63,8 @@ b3 = runpy.run_path(os.path.join(TOOLS, "bambu_3mf.py"))
 bpre = runpy.run_path(os.path.join(TOOLS, "bambu_presets.py"))
 bsl = runpy.run_path(os.path.join(TOOLS, "bambu_slice.py"))
 bcl = runpy.run_path(os.path.join(TOOLS, "bambu_cloud.py"))
+blan = runpy.run_path(os.path.join(TOOLS, "bambu_lan.py"))
+bpr = runpy.run_path(os.path.join(TOOLS, "bambu_print.py"))
 bp = runpy.run_path(os.path.join(TOOLS, "paths.py"))
 
 CONFIG_PATH = os.path.join(TOOLS, "bambu_config.json")
@@ -101,11 +104,14 @@ def write_config(cfg):
 # ── the server ───────────────────────────────────────────────────────
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp import FastMCP            # MCP SDK 1.x
 except ImportError:                                   # pragma: no cover
-    sys.stderr.write(
-        "The MCP SDK isn't installed. Run:  pip install \"mcp[cli]\"\n")
-    raise
+    try:                                              # 2.x renamed it
+        from mcp.server.mcpserver import MCPServer as FastMCP
+    except ImportError:
+        sys.stderr.write(
+            "The MCP SDK isn't installed. Run:  python -m pip install \"mcp[cli]<2\"\n")
+        raise
 
 mcp = FastMCP("bonfire-bambu")
 
@@ -140,7 +146,10 @@ def bambu_setup_check() -> str:
     exe = bsl["find_studio"](cfg.get("studio_exe", ""))
     report["studio_exe"] = exe or None
     if exe:
-        report["studio_version"] = bsl["studio_version"](exe) or "(wouldn't say)"
+        version = bsl["installed_studio_version"](exe)
+        report["studio_version"] = version or "(wouldn't say)"
+        if bsl["studio_can_print"](version) is False:
+            report["missing"].append(bsl["STUDIO_TOO_OLD"] % version)
     if not exe:
         report["missing"].append(
             "Bambu Studio wasn't found. Set studio_exe in tools/bambu_config.json "
@@ -604,6 +613,109 @@ def ams_status(serial: str = "") -> str:
         return _fail(str(exc))
     return _ok({"ok": True, "printer": st.get("printer"), "state": st.get("state"),
                 "slots": st.get("ams", [])})
+
+
+def _guard(fn, *a, **kw):
+    """Run a print-side call and turn the expected refusals into JSON."""
+    try:
+        return fn(*a, **kw)
+    except (bpr["PrintError"], bcl["CloudError"], blan["LanError"]) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@mcp.tool()
+def lan_check() -> str:
+    """Prove the home-network path works before a print depends on it: find
+    the printer, log in over FTPS, list what's on its SD card. The access code
+    is used but never shown."""
+    r = _guard(blan["check"])
+    return _ok(r)
+
+
+@mcp.tool()
+def print_preview(path: str, plate: int = 1, slots: str = "") -> str:
+    """
+    Step 1 of starting a print (04_bambu_basics.md section 7). For a sliced
+    .gcode.3mf: plate, print time, grams, which AMS slot feeds each filament
+    (read live from the printer), whether the printer is free, and any reason
+    not to go ahead. When everything is fine it returns a one-time
+    approval_code (10 minutes, this file and plate only).
+
+    Show the person the `report`, and only call start_print with the code
+    after they say yes. Never start on an earlier yes.
+    slots: optional override, e.g. "1:3" = filament 1 from AMS slot 3.
+    """
+    r = _guard(bpr["preview"], path, plate, slots)
+    if r.get("file"):
+        r["report"] = bpr["format_preview"](r)
+    return _ok(r)
+
+
+@mcp.tool()
+def start_print(path: str, plate: int = 1, approval_code: str = "") -> str:
+    """
+    Step 2: start the print the person just said yes to, with the
+    approval_code from print_preview. Uploads the file to the printer over the
+    home network and starts it through Bambu Cloud (route lan_cloud). If the
+    printer refuses for authorization reasons — Bambu's lockdown reaching the
+    P1S — the route switches to Bambu Connect by itself and opens it with the
+    file; the report says so.
+    """
+    return _ok(_guard(bpr["start"], path, plate, approval_code))
+
+
+@mcp.tool()
+def pause_print(retry: bool = False) -> str:
+    """Pause the running print. No approval needed (04 section 7). This P1S
+    refuses cloud control commands (MQTT command verification), so after the
+    first refusal nothing is sent and the answer says to pause in Bambu
+    Studio's Device tab, Handy, or on the screen. retry=true sends anyway."""
+    return _ok(_guard(bpr["pause"], retry=retry))
+
+
+@mcp.tool()
+def resume_print(retry: bool = False) -> str:
+    """Resume a paused print. No approval needed. Refused by this P1S's
+    firmware like pause_print; retry=true sends anyway."""
+    return _ok(_guard(bpr["resume"], retry=retry))
+
+
+@mcp.tool()
+def stop_print(confirm: bool = False, retry: bool = False) -> str:
+    """Stop the print for good (it can't be resumed). Needs a yes: pass
+    confirm=true only after the person said yes to stopping this print.
+    Refused by this P1S's firmware like pause_print — if it's urgent, tell
+    the person to stop it on the printer's screen or in Handy right away."""
+    return _ok(_guard(bpr["stop"], confirm, retry=retry))
+
+
+@mcp.tool()
+def print_route(set_to: str = "") -> str:
+    """How prints get to the printer. lan_cloud (default): upload over the home
+    network, start over Bambu Cloud. bambu_connect: open Bambu Connect with the
+    file for the person to send — the fallback if Bambu locks network starts on
+    the P1S. studio: open in Bambu Studio. Blank reads the current route."""
+    if set_to:
+        return _ok(_guard(bpr["set_route"], set_to, "set on request"))
+    cfg = bpr["read_config"]()
+    return _ok({"route": bpr["route"](),
+                "last_change": cfg.get("print_route_changed"),
+                "approval_required": bpr["needs_approval"]()})
+
+
+@mcp.tool()
+def retarget_to_p1s(path: str) -> str:
+    """For a 3MF that opens set up for another Bambu printer — MakerWorld files
+    often default to an X1. Swaps in the P1S's own machine settings (start/end
+    G-code, nozzle, limits, bed no-print area; 69 settings from Bambu's
+    profiles), keeps the process and filament choices, and writes
+    <name>_P1S.3mf beside it. The original isn't touched. A file that was
+    already sliced for the other printer has that G-code removed and needs
+    slicing again."""
+    r = _guard(bpr["retarget_to_p1s"], path)
+    if r.get("ok"):
+        r["report"] = bpr["format_retarget"](r)
+    return _ok(r)
 
 
 @mcp.tool()

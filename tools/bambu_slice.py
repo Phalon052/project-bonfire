@@ -97,6 +97,16 @@ SLICE_WARNINGS = {
 }
 
 
+# Warnings the user has decided not to see (04_bambu_basics.md section 8).
+# They are still kept in the report data under "warnings", marked ignored;
+# they just aren't printed.
+IGNORED_WARNINGS = {
+    # 2026-09-19: bed temperatures are set deliberately and have never been
+    # changed; the PLA-in-a-closed-printer reminder isn't wanted.
+    "bed_temperature_too_high_than_filament",
+}
+
+
 # ── finding the slicer ───────────────────────────────────────────────
 
 def find_studio(configured=""):
@@ -120,16 +130,96 @@ def find_studio(configured=""):
     return shutil.which("bambu-studio") or ""
 
 
+def _windows_file_version(exe):
+    """The version stamped into a Windows .exe (what Explorer's Details tab
+    shows), as 02.08.02.61. Needs no Studio run at all."""
+    if os.name != "nt":
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        ver = ctypes.WinDLL("version")
+        size = ver.GetFileVersionInfoSizeW(exe, None)
+        if not size:
+            return ""
+        buf = ctypes.create_string_buffer(size)
+        if not ver.GetFileVersionInfoW(exe, 0, size, buf):
+            return ""
+        ptr, n = ctypes.c_void_p(), wintypes.UINT()
+        if not ver.VerQueryValueW(buf, "\\", ctypes.byref(ptr), ctypes.byref(n)):
+            return ""
+        # VS_FIXEDFILEINFO: signature, struct version, then file version MS, LS
+        ms, ls = ctypes.cast(ptr, ctypes.POINTER(wintypes.DWORD * 4)).contents[2:4]
+        parts = (ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF)
+        return ".".join("%02d" % p for p in parts) if any(parts) else ""
+    except Exception:
+        return ""
+
+
 def studio_version(exe):
     """The installed version, or "" if it won't say."""
+    v = _windows_file_version(exe)
+    if v:
+        return v
     try:
         out = subprocess.run([exe, "--info"], capture_output=True, text=True,
                              timeout=60)
         text = (out.stdout or "") + (out.stderr or "")
-        m = re.search(r"(\d{2}\.\d{2}\.\d{2}\.\d{2})", text)
+        m = (re.search(r"Version (\d{2}\.\d{2}\.\d{2}\.\d{2})", text)
+             or re.search(r"(\d{2}\.\d{2}\.\d{2}\.\d{2})", text))
         return m.group(1) if m else ""
     except Exception:
         return ""
+
+
+# Printer firmware from 2025 on only obeys start/stop commands that carry
+# Bambu's signature. Studio 1.9.x predates that: its cloud send succeeds (the
+# job lands in Handy's history as "printing") but the printer drops the start
+# command and nothing happens. Seen here with 01.09.07.52 on 2026-09-19.
+MIN_PRINTING_VERSION = "02.00.00.00"
+
+
+def version_tuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v or "")[:4])
+
+
+def studio_can_print(version):
+    """True / False, or None when the version is unknown."""
+    if not version:
+        return None
+    return version_tuple(version) >= version_tuple(MIN_PRINTING_VERSION)
+
+
+def installed_studio_version(exe=""):
+    """The version, from `--info` or failing that Studio's own newest log."""
+    v = studio_version(exe) if exe else ""
+    if v:
+        return v
+    folder = studio_log_folder()
+    logs = sorted(glob.glob(os.path.join(folder, "debug_*.log.0")),
+                  key=os.path.getmtime) if folder else []
+    if exe and os.path.isfile(exe):
+        # A log written before Studio was last installed describes the old one.
+        installed = os.path.getmtime(exe)
+        logs = [l for l in logs if os.path.getmtime(l) >= installed]
+    for log in reversed(logs[-3:]):
+        try:
+            with open(log, "r", encoding="utf-8", errors="replace") as fh:
+                for _ in range(20):
+                    m = re.search(r"BambuStudio Version (\d{2}\.\d{2}\.\d{2}\.\d{2})",
+                                  fh.readline())
+                    if m:
+                        return m.group(1)
+        except OSError:
+            continue
+    return ""
+
+
+STUDIO_TOO_OLD = ("Bambu Studio %s is too old to start prints on this printer: "
+                  "the send goes through (Handy's history shows it \"printing\") "
+                  "but the printer ignores the start. Update Bambu Studio to the "
+                  "latest release (Help → Check for updates, or bambulab.com/"
+                  "download) and send again.")
 
 
 def signed(code):
@@ -506,6 +596,7 @@ def read_slice_info(gcode_3mf):
                 "message": SLICE_WARNINGS.get(msg, msg),
                 "raw": msg,
                 "level": _int(w.get("level")) or 0,
+                "ignored": msg in IGNORED_WARNINGS,
             })
         plates.append({
             "plate": _int(meta.get("index")) or len(plates) + 1,
@@ -658,7 +749,8 @@ def format_slice_report(report):
             lines.append("    ! Some toolpath falls outside the printable "
                          "area — this will not print correctly.")
         for w in p["warnings"]:
-            lines.append("    ! " + w["message"])
+            if not w.get("ignored"):
+                lines.append("    ! " + w["message"])
     for w in report.get("slicer_warnings", []):
         lines.append("")
         lines.append("  ! " + w)

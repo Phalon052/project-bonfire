@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Project Bonfire — Bambu Layer C (read-only): the P1S over Bambu Cloud.
+Project Bonfire — Bambu Layer C: the P1S over Bambu Cloud.
 
-Signs in to the Bambu account, finds the printer, and reads its live state —
-job, progress, temperatures, errors (HMS), and what is loaded in the AMS.
-Nothing here pauses, stops or starts anything; that is Phase 4.
+Signs in to the Bambu account, finds the printer, reads its live state — job,
+progress, temperatures, errors (HMS), what is loaded in the AMS — and sends it
+commands (send_command). The rules about which commands need a yes live in
+bambu_print.py, not here.
 
 Sign in once, in a terminal on this PC:
 
@@ -444,6 +445,115 @@ def fetch_report(record, serial, wait_s=STATUS_WAIT_S):
                          "on, online, and not in LAN-only or Developer Mode?"
                          % wait_s)
     return merged
+
+
+def lan_access_code(serial="", record=None, http_fn=None):
+    """The printer's LAN access code, as Bambu Cloud reports it for a bound
+    printer. For bambu_lan.py's FTPS login only: it is not stored, and nothing
+    that calls this may print or return it."""
+    record = record or _require_record()
+    http_fn = http_fn or http
+    r = http_fn("GET", API[record.get("region", "global")]
+                + "/v1/iot-service/api/user/bind", _auth(record))
+    if r.status != 200:
+        raise _refused(r, "Fetching the access code")
+    devs = r.json().get("devices", []) or []
+    want = serial or record.get("serial", "")
+    for d in devs:
+        if (not want or d.get("dev_id") == want) and d.get("dev_access_code"):
+            return d["dev_access_code"]
+    raise CloudError("Bambu Cloud didn't return an access code for this printer.")
+
+
+_SEQ = [int(time.time()) % 100000]
+
+
+def next_sequence():
+    _SEQ[0] += 1
+    return str(_SEQ[0])
+
+
+def command_payload(command, **fields):
+    """A `print` command the printer will act on. Every one carries a fresh
+    sequence_id and a `param` — without both, the broker accepts the message
+    and the printer silently ignores it (bambulabs_api issue #183)."""
+    body = {"sequence_id": next_sequence(), "command": command, "param": ""}
+    body.update(fields)
+    return {"print": body}
+
+
+def send_command(payload, serial="", record=None, wait_s=8.0):
+    """
+    Publish one command and watch for the printer's answer.
+
+    The printer echoes a command it has handled as a `print` message with the
+    same command and sequence_id, plus `result` ("success"/"fail") and often a
+    `reason`. Returns what came back: the echo (if any) and the latest state.
+    """
+    try:
+        import paho.mqtt.client as mqtt
+    except ImportError:
+        raise CloudError("Sending commands needs paho-mqtt: "
+                         "python -m pip install paho-mqtt")
+    record = record or _require_record()
+    serial = serial or record.get("serial") or pick_printer(
+        list_devices(record))["serial"]
+    region = record.get("region", "global")
+    body = payload["print"]
+    seq, cmd = body["sequence_id"], body["command"]
+    seen = {"echo": None, "state": None, "error": None, "fun": None}
+    done, errors = threading.Event(), []
+
+    def on_connect(client, userdata, flags, rc, *args):
+        code = getattr(rc, "value", rc)
+        if code != 0:
+            errors.append("the broker refused the connection (code %s)" % code)
+            done.set()
+            return
+        client.subscribe("device/%s/report" % serial, qos=1)
+        client.publish("device/%s/request" % serial, json.dumps(payload), qos=1)
+
+    def on_message(client, userdata, msg):
+        try:
+            pr = json.loads(msg.payload).get("print") or {}
+        except ValueError:
+            return
+        if "gcode_state" in pr:
+            seen["state"] = pr["gcode_state"]
+        if pr.get("print_error"):
+            seen["error"] = pr["print_error"]
+        if pr.get("fun") is not None:
+            seen["fun"] = pr["fun"]
+        if pr.get("command") == cmd and str(pr.get("sequence_id")) == seq:
+            seen["echo"] = {k: pr.get(k) for k in ("result", "reason", "err_code")
+                            if pr.get(k) is not None}
+            done.set()
+
+    try:
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                             client_id="bonfire-%d" % int(time.time()))
+    except AttributeError:
+        client = mqtt.Client(client_id="bonfire-%d" % int(time.time()))
+    client.username_pw_set(record["username"], password=record["token"])
+    client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
+    client.on_connect, client.on_message = on_connect, on_message
+    try:
+        client.connect(MQTT_HOST[region], MQTT_PORT, keepalive=30)
+    except Exception as exc:
+        raise CloudError("Couldn't reach Bambu's cloud broker: %s" % exc)
+    client.loop_start()
+    done.wait(wait_s)
+    time.sleep(0.5)                     # let a state change arrive after the echo
+    client.loop_stop()
+    try:
+        client.disconnect()
+    except Exception:
+        pass
+    if errors:
+        raise CloudError(errors[0])
+    return {"serial": serial, "command": cmd, "sequence_id": seq,
+            "echo": seen["echo"], "state": seen["state"],
+            "print_error": seen["error"], "fun": seen["fun"]}
 
 
 def _deep_merge(into, new):

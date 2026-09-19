@@ -12,6 +12,20 @@ How to use Project Bonfire day to day. It's a cheat sheet for people; the projec
 - **First time on a PC:** copy `.env.example` to `.env`, fill in the paths for that
   machine, then run `tools/env.py` → `apply_command()` and do what it prints (it puts
   `BLENDER_PATH` in the user environment so Blender also works with its window closed).
+- **Bambu printer, first time on a PC** (and again when the sign-in runs out, about every
+  3 months): in PowerShell, run
+
+  ```powershell
+  cd "<path to your Project Bonfire folder>"
+  python -m pip install paho-mqtt curl_cffi
+  python tools\bambu_cloud.py login <your Bambu account email>
+  ```
+
+  It asks for the password (and the emailed code or 2FA code if Bambu wants one) in the
+  terminal. Type it there, never in a chat. The sign-in is saved in
+  `tools/bambu_cloud.local.json`, which git ignores. `python tools\bambu_cloud.py status`
+  checks it works. Bambu Studio must be **2.0 or newer** or its Print button won't start the
+  printer.
 - **From a phone:** *not available yet (Dispatch is still rolling out).* Once it is, use Dispatch and name the project ("In Project Bonfire, …"). The PC must be awake with the Claude desktop app open. Approval prompts time out after 10 minutes.
 
 ## Commands

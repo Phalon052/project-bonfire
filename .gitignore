@@ -32,6 +32,11 @@ tools/bambu_config.local.json
 # Bambu Cloud sign-in token (tools/bambu_cloud.py login)
 tools/bambu_cloud.local.json
 tools/bambu_cloud.local.json.tmp
+# One-time print approval codes (tools/bambu_print.py)
+tools/bambu_print.local.json
+# Bambu Studio preset template — saved from your own Studio, so it's per-machine
+# (and Studio writes your account number into it). See bambu_presets.py.
+tools/bambu_template.3mf
 
 # ── Python ───────────────────────────────────────────────────
 __pycache__/

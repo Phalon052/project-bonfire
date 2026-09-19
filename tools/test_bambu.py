@@ -17,6 +17,8 @@ b3 = runpy.run_path(os.path.join(HERE, "bambu_3mf.py"))
 bb = runpy.run_path(os.path.join(HERE, "bambu.py"))
 bs = runpy.run_path(os.path.join(HERE, "bambu_slice.py"))
 bc = runpy.run_path(os.path.join(HERE, "bambu_cloud.py"))
+bl = runpy.run_path(os.path.join(HERE, "bambu_lan.py"))
+bpr = runpy.run_path(os.path.join(HERE, "bambu_print.py"))
 
 FAILURES = []
 
@@ -106,7 +108,7 @@ res = {"return_code": 0, "error_string": "Success.", "sliced_plates": []}
 if mode == "fail":
     res = {"return_code": -21, "error_string": "Arrange failed."}
     json.dump(res, open(os.path.join(outdir, "result.json"), "w"))
-    sys.exit(256 - 21)
+    sys.exit(-21 if os.name == "nt" else 256 - 21)   # Windows keeps 32 bits
 with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dest, "w") as zout:
     for n in zin.namelist():
         data = zin.read(n)
@@ -122,10 +124,17 @@ json.dump(res, open(os.path.join(outdir, "result.json"), "w"))
 
 
 def _fake_studio(tmp):
-    path = os.path.join(tmp, "bambu-studio")
-    with open(path, "w") as fh:
+    """The stand-in, runnable the way the OS runs programs: a script with a
+    shebang on Unix, a .cmd that hands it to this Python on Windows."""
+    script = os.path.join(tmp, "bambu-studio.py" if os.name == "nt" else "bambu-studio")
+    with open(script, "w") as fh:
         fh.write(FAKE_STUDIO)
-    os.chmod(path, 0o755)
+    if os.name != "nt":
+        os.chmod(script, 0o755)
+        return script
+    path = os.path.join(tmp, "bambu-studio.cmd")
+    with open(path, "w") as fh:
+        fh.write('@"%s" "%s" %%*\r\n' % (sys.executable, script))
     return path
 
 
@@ -342,6 +351,8 @@ def main():
           "This filament is more abrasive than the nozzle is rated for.")
     check("two plates totalled", r["total_seconds"], 4823 + 600)
     check("empty weight survives", r["plates"][1]["filament_g"], None)
+    check("the PLA bed warning is hidden by choice",
+          "bed_temperature_too_high_than_filament" in bs["IGNORED_WARNINGS"], True)
     check("the PLA door-open warning is translated",
           "front door" in bs["SLICE_WARNINGS"]["bed_temperature_too_high_than_filament"], True)
     note("report", bs["format_slice_report"](
@@ -352,8 +363,11 @@ def main():
     check("plain project not sliced", r2["sliced"], False)
 
     print("\nslicing — exit codes and naming")
-    check("152 means -104", bs["signed"](152), -104)
-    check("232 means -24", bs["signed"](232), -24)
+    if os.name == "nt":      # Windows keeps the full code, so 152 really is 152
+        check("152 stays 152 on Windows", bs["signed"](152), 152)
+    else:                    # Unix keeps only the low byte
+        check("152 means -104", bs["signed"](152), -104)
+        check("232 means -24", bs["signed"](232), -24)
     check("0 stays 0", bs["signed"](0), 0)
     check("Windows 32-bit 4294966939 means -357", bs["signed"](4294966939), -357)
     check("a crash is named",
@@ -370,7 +384,14 @@ def main():
               os.path.join(tmp, "thing_2.3mf"))), "thing_2_2.gcode.3mf")
 
     print("\nslicing — missing slicer is reported, not crashed on")
-    r3 = bs["slice_file"](out, studio_exe="/nowhere/bambu-studio")
+    # Pretend nothing is installed, even on a PC where Studio really is.
+    g = bs["slice_file"].__globals__
+    real_find = g["find_studio"]
+    g["find_studio"] = lambda configured="": ""
+    try:
+        r3 = bs["slice_file"](out, studio_exe="/nowhere/bambu-studio")
+    finally:
+        g["find_studio"] = real_find
     check("says Bambu Studio is missing", r3["ok"], False)
     check("names what it needs", r3.get("needs"), "bambu-studio.exe")
 
@@ -398,14 +419,14 @@ def main():
           and a["command"][a["command"].index("--orient") + 1], "0")
     check("export given as a bare name, not a path",
           a["command"][a["command"].index("--export-3mf") + 1], "arranged_1.3mf")
-    check("no settings lost", a["settings_lost"], [])
+    check("no settings lost", a.get("settings_lost"), [])
     check("still a Bambu project", b3["describe"](dest)["is_bambu_project"], True)
 
     os.environ["FAKE_MODE"] = "dropsettings"
     a2 = bs["studio_arrange"](src, out_path=os.path.join(tmp, "out", "d.3mf"),
                               studio_exe=studio)
     check("a dropped raft is reported",
-          a2["settings_lost"], ["hex_nut raft_layers (was 2, now unset)"])
+          a2.get("settings_lost"), ["hex_nut raft_layers (was 2, now unset)"])
     os.environ["FAKE_MODE"] = "fail"
     a3 = bs["studio_arrange"](src, out_path=os.path.join(tmp, "out", "f.3mf"),
                               studio_exe=studio)
@@ -586,6 +607,244 @@ def main():
             {"serial": "B", "name": "A1", "model": "A1", "model_code": "N2S"}]
     check("the P1S is picked out", bc["pick_printer"](devs)["serial"], "A")
     check("a serial overrides", bc["pick_printer"](devs, "B")["serial"], "B")
+
+    print("\nprinting — matching filaments to your AMS (as it was on 2026-09-18)")
+    ams = [{"slot": 1, "loaded": True, "type": "PLA", "colour": "#000000"},
+           {"slot": 2, "loaded": True, "type": "PLA", "colour": "#FFF144"},
+           {"slot": 3, "loaded": True, "type": "PLA", "colour": "#000000"},
+           {"slot": 4, "loaded": True, "type": "PETG", "colour": "#515151",
+            "brand": "PETG HF"}]
+    m = bpr["map_filaments"]([{"id": 1, "type": "PLA", "colour": "#FFF144"}], ams)
+    check("yellow PLA goes to the yellow slot", m["slots"][1]["slot"], 2)
+    check("an exact match needs no note", m["notes"], [])
+    m = bpr["map_filaments"]([{"id": 1, "type": "PLA", "colour": "#00AE42"}], ams)
+    check("green PLA with no green loaded still gets a PLA slot",
+          m["slots"][1]["type"], "PLA")
+    check("…and says the colour differs", len(m["notes"]), 1)
+    m = bpr["map_filaments"]([{"id": 1, "type": "PETG", "colour": "#000000"}], ams)
+    check("PETG goes to the PETG HF slot", m["slots"][1]["slot"], 4)
+    m = bpr["map_filaments"]([{"id": 1, "type": "ABS", "colour": "#FFFFFF"}], ams)
+    check("ABS isn't loaded — refused, not guessed", m["missing"] != [], True)
+    m = bpr["map_filaments"]([{"id": 1, "type": "PLA-CF", "colour": "#000000"}], ams)
+    check("PLA-CF is not plain PLA", m["missing"] != [], True)
+    m = bpr["map_filaments"]([{"id": 1, "type": "PLA", "colour": "#000000"}], ams,
+                             {1: "3"})
+    check("the person can pick the slot", m["slots"][1]["slot"], 3)
+    two = bpr["map_filaments"]([{"id": 1, "type": "PLA", "colour": "#000000"},
+                                {"id": 3, "type": "PETG", "colour": "#515151"}], ams)
+    check("printer mapping: one entry per project filament, -1 if unused",
+          bpr["ams_mapping"](3, two["slots"]), [0, -1, 3])
+    check("spool holder is 254",
+          bpr["ams_mapping"](1, {1: {"slot": "external"}}), [254])
+
+    print("\nprinting — the one-time approval code")
+    g = bpr["issue_code"].__globals__
+    g["APPROVALS_FILE"] = os.path.join(tmp, "approvals.json")
+    g["CONFIG_PATH"] = os.path.join(tmp, "cfg.json")
+    job = os.path.join(tmp, "job.gcode.3mf")
+    _write_sliced_fixture(job)
+    code = bpr["issue_code"](job, 1, [0])
+    check("a code is issued", len(code), 6)
+    try:
+        bpr["redeem_code"](code, job, 2)
+        check("wrong plate refused", False, True)
+    except bpr["PrintError"]:
+        check("wrong plate refused", True, True)
+    code = bpr["issue_code"](job, 1, [0])
+    with zipfile.ZipFile(job, "a") as z:
+        z.writestr("changed.txt", "x")
+    try:
+        bpr["redeem_code"](code, job, 1)
+        check("a file changed after the preview is refused", False, True)
+    except bpr["PrintError"] as e:
+        check("a file changed after the preview is refused", "changed" in str(e), True)
+    code = bpr["issue_code"](job, 1, [0])
+    data = json.load(open(g["APPROVALS_FILE"]))
+    data[code]["expires"] = 1                      # long past, never rewritten
+    json.dump(data, open(g["APPROVALS_FILE"], "w"))
+    try:
+        bpr["redeem_code"](code, job, 1)
+        check("an expired code is refused", False, True)
+    except bpr["PrintError"] as e:
+        check("an expired code is refused", "expired" in str(e), True)
+    code = bpr["issue_code"](job, 1, [0])
+    check("the right code works", bpr["redeem_code"](code, job, 1)["mapping"], [0])
+    try:
+        bpr["redeem_code"](code, job, 1)
+        check("and only once", False, True)
+    except bpr["PrintError"]:
+        check("and only once", True, True)
+
+    print("\nprinting — start, with stand-ins for the printer")
+    idle = lambda: {"state": "finished", "serial": "S1", "ams": ams, "errors": []}
+    sent = []
+    def fake_send(payload, serial="", wait_s=0):
+        sent.append(payload)
+        return {"echo": {"result": "success"}, "state": "PREPARE"}
+    fake_up = lambda path, serial="": {"name": "job.gcode.3mf", "bytes": 1, "ip": "10.0.0.9"}
+    code = bpr["issue_code"](job, 1, [0])
+    r = bpr["start"](job, 1, code, _send=fake_send, _upload=fake_up, _status=idle)
+    check("started", r["ok"], True)
+    pr = sent[-1]["print"]
+    check("command is project_file", pr["command"], "project_file")
+    check("plate goes in param", pr["param"], "Metadata/plate_1.gcode")
+    check("file is on the SD card", pr["url"], "file:///sdcard/job.gcode.3mf")
+    check("carries a sequence_id", bool(pr["sequence_id"]), True)
+    check("bed levelling on", pr["bed_leveling"], True)
+    check("flow calibration and timelapse off", (pr["flow_cali"], pr["timelapse"]),
+          (False, False))
+    check("uses the AMS", (pr["use_ams"], pr["ams_mapping"]), (True, [0]))
+    try:
+        bpr["start"](job, 1, "", _send=fake_send, _upload=fake_up, _status=idle)
+        check("no code, no start", False, True)
+    except bpr["PrintError"]:
+        check("no code, no start", True, True)
+    busy = lambda: {"state": "printing", "serial": "S1", "ams": ams, "errors": []}
+    code = bpr["issue_code"](job, 1, [0])
+    try:
+        bpr["start"](job, 1, code, _send=fake_send, _upload=fake_up, _status=busy)
+        check("won't start over a running print", False, True)
+    except bpr["PrintError"]:
+        check("won't start over a running print", True, True)
+
+    print("\nprinting — if Bambu's lockdown reaches the P1S")
+    opened = []
+    bpr["start"].__globals__["bambu_connect_installed"] = lambda: True
+    bpr["start"].__globals__["open_bambu_connect"] = \
+        lambda path: opened.append(path) or {"ok": True, "route": "bambu_connect"}
+    refuse = lambda payload, serial="", wait_s=0: {
+        "echo": {"result": "fail", "reason": "mqtt message verify failed"},
+        "state": "FINISH"}
+    code = bpr["issue_code"](job, 1, [0])
+    r = bpr["start"](job, 1, code, _send=refuse, _upload=fake_up, _status=idle)
+    check("the start is reported as refused", r["ok"], False)
+    check("the route switches to Bambu Connect", bpr["route"](), "bambu_connect")
+    check("…and Bambu Connect opens with the file", opened, [job])
+    check("why it switched is recorded",
+          "verify" in json.load(open(g["CONFIG_PATH"]))["print_route_changed"]["why"], True)
+    r = bpr["start"](job, 1, "", _send=fake_send, _upload=fake_up, _status=idle)
+    check("next start goes straight to Bambu Connect", r["route"], "bambu_connect")
+    bpr["set_route"]("lan_cloud")
+    check("and it can be switched back", bpr["route"](), "lan_cloud")
+    print("\nprinting — the real refusal from this P1S (2026-09-19)")
+    gl = bpr["start"].__globals__
+    studio_opened = []
+    gl["bs"]["open_in_studio"] = lambda path, exe="": studio_opened.append(path) or {"ok": True}
+    gl["bambu_connect_installed"] = lambda: False
+    bpr["set_route"]("lan_cloud")
+    real = lambda payload, serial="", wait_s=0: {"echo": {"err_code": 84033543},
+                                                 "state": None}
+    code = bpr["issue_code"](job, 1, [0])
+    r = bpr["start"](job, 1, code, _send=real, _upload=fake_up, _status=idle)
+    check("err_code alone counts as a refusal, not silence",
+          "verification failed" in r["error"], True)
+    check("no Bambu Connect installed -> Studio route", bpr["route"](), "studio")
+    check("...and Studio opens with the file", studio_opened, [job])
+    check("the reason is recorded",
+          "84033543" in json.load(open(g["CONFIG_PATH"]))["print_route_changed"]["why"], True)
+    gl["bambu_connect_installed"] = lambda: True
+    bpr["set_route"]("lan_cloud")
+    code = bpr["issue_code"](job, 1, [0])
+    bpr["start"](job, 1, code, _send=real, _upload=fake_up, _status=idle)
+    check("with Bambu Connect installed -> Bambu Connect route", bpr["route"](), "bambu_connect")
+    bpr["set_route"]("lan_cloud")
+    gl2 = bpr["pause"].__globals__
+    real_send = gl2["bc"]["send_command"]
+    gl2["bc"]["send_command"] = lambda payload, serial="", wait_s=8: {
+        "echo": {"err_code": 84033543}, "state": "RUNNING"}
+    p_ = bpr["pause"]()
+    check("a refused pause isn't reported as done", p_["ok"], False)
+    check("...and says to use Studio, Handy or the screen", "Handy" in p_["error"], True)
+    sends = []
+    gl2["bc"]["send_command"] = lambda payload, serial="", wait_s=8: (
+        sends.append(payload) or {"echo": {"err_code": 84033543}, "state": "RUNNING"})
+    r_ = bpr["resume"]()
+    check("once refused, the next one isn't sent", (r_["sent"], sends), (False, []))
+    check("...and still says where to do it", "Handy" in r_["error"], True)
+    gl2["bc"]["send_command"] = lambda payload, serial="", wait_s=8: (
+        sends.append(payload) or {"echo": {"result": "success"}, "state": "PAUSE"})
+    p2 = bpr["pause"](retry=True)
+    check("--retry sends anyway, and a success clears the refusal",
+          (p2["ok"], len(sends), "control_refused" in json.load(open(g["CONFIG_PATH"]))),
+          (True, 1, False))
+    gl2["bc"]["send_command"] = real_send
+    url = bpr["bambu_connect_url"](r"C:\Users\x\Desktop\a b.gcode.3mf")
+    check("Bambu Connect link is the documented form",
+          url.startswith("bambu-connect://import-file?path=") and
+          url.endswith("&version=1.0.0"), True)
+    try:
+        bpr["stop"](confirm=False)
+        check("stop needs a yes", False, True)
+    except bpr["PrintError"]:
+        check("stop needs a yes", True, True)
+    check("pause/resume/stop carry param and sequence_id",
+          sorted(bc["command_payload"]("pause")["print"]), ["command", "param", "sequence_id"])
+
+    print("\nlocal network — the printer's announcement and file names")
+    pkt = (b"NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1990\r\n"
+           b"Location: 192.168.1.42\r\nNT: urn:bambulab-com:device:3dprinter:1\r\n"
+           b"USN: 01P00A123456789\r\nDevModel.bambu.com: C12\r\n"
+           b"DevName.bambu.com: SCP 2000\r\nDevConnect.bambu.com: cloud\r\n\r\n")
+    a = bl["parse_ssdp"](pkt)
+    check("address read from the announcement", a["ip"], "192.168.1.42")
+    check("serial and model", (a["serial"], a["model"]), ("01P00A123456789", "C12"))
+    check("non-Bambu chatter ignored", bl["parse_ssdp"](b"NOTIFY * HTTP/1.1\r\nServer: TV\r\n"), None)
+    check("safe name on the SD card", bl["safe_name"](r"C:\a\no10 24 nut_4_1.gcode.3mf"),
+          "no10_24_nut_4_1.gcode.3mf")
+
+    print("\nMakerWorld X1 file → P1S")
+    x1 = os.path.join(tmp, "makerworld_x1.3mf")
+    tpl = os.path.join(HERE, "bambu_template.3mf")
+    if os.path.isfile(tpl):
+        st_ = b3["read_project_settings"](tpl)
+        xs = dict(st_, printer_model="Bambu Lab X1 Carbon",
+                  printer_settings_id="Bambu Lab X1 Carbon 0.4 nozzle",
+                  machine_start_gcode=";X1 start with lidar\nM400", nozzle_type="hardened_steel",
+                  filament_type=["PLA-CF"])
+        with zipfile.ZipFile(tpl) as zi, zipfile.ZipFile(x1, "w") as zo:
+            for n in zi.namelist():
+                d = zi.read(n)
+                if n == "Metadata/project_settings.config":
+                    d = json.dumps(xs).encode()
+                if n == "Metadata/model_settings.config":
+                    d = d.replace(b"<plate>", b'<plate>\n    <metadata key="gcode_file" value="Metadata/plate_1.gcode"/>')
+                zo.writestr(n, d)
+            zo.writestr("Metadata/plate_1.gcode", "; X1 gcode")
+        before = open(x1, "rb").read()
+        r = bpr["retarget_to_p1s"](x1)
+        out_s = b3["read_project_settings"](r["file"])
+        check("now a P1S", out_s["printer_model"], "Bambu Lab P1S")
+        check("P1S start G-code swapped in",
+              out_s["machine_start_gcode"] == st_["machine_start_gcode"], True)
+        check("nozzle type is the P1S's", out_s["nozzle_type"], st_["nozzle_type"])
+        check("process and filament left alone", out_s["filament_type"], ["PLA-CF"])
+        names = zipfile.ZipFile(r["file"]).namelist()
+        check("X1 G-code removed", "Metadata/plate_1.gcode" in names, False)
+        check("and its plate reference", b"gcode_file" in zipfile.ZipFile(r["file"]).read(
+            "Metadata/model_settings.config"), False)
+        check("abrasive filament on a stainless nozzle flagged",
+              any("abrasive" in n for n in r["notes"]), True)
+        check("original untouched", open(x1, "rb").read() == before, True)
+        check("output named beside it", os.path.basename(r["file"]), "makerworld_x1_P1S.3mf")
+        check("a P1S file is left alone", bpr["retarget_to_p1s"](r["file"])["changed"], False)
+        unsliced = os.path.join(tmp, "mw_unsliced.3mf")
+        with zipfile.ZipFile(x1) as zi, zipfile.ZipFile(unsliced, "w") as zo:
+            for n in zi.namelist():
+                if n != "Metadata/plate_1.gcode":
+                    zo.writestr(n, zi.read(n))
+        r2 = bpr["retarget_to_p1s"](unsliced)
+        check("an unsliced Studio file isn't called sliced",
+              (r2["sliced_parts_removed"], any("sliced" in n for n in r2["notes"])), ([], False))
+        note("report", bpr["format_retarget"](r).splitlines()[1])
+    else:
+        note("skipped", "no tools/bambu_template.3mf here")
+
+    print("\n== Studio version that can start prints ==")
+    _bs = runpy.run_path(os.path.join(HERE, "bambu_slice.py"))
+    check("1.9.7.52 can't start prints", _bs["studio_can_print"]("01.09.07.52"), False)
+    check("2.8.2.61 can", _bs["studio_can_print"]("02.08.02.61"), True)
+    check("unknown version isn't guessed", _bs["studio_can_print"](""), None)
+    check("warning names the version", "01.09.07.52" in _bs["STUDIO_TOO_OLD"] % "01.09.07.52", True)
 
     print("\n" + ("-" * 60))
     if FAILURES:

@@ -105,7 +105,8 @@ Applies to the Bambu Studio MCP (plan: `BAMBU_MCP_PLAN.md`).
 - **Slice.**
 - **Save the sliced file** (`.gcode.3mf`) in the project's `3mf/` folder, named like the 3MF (`<name>_<n>.gcode.3mf`).
 
-**Needs approval every time**
+**Needs approval every time** — enforced by the tools themselves (2026-09-19), because the Claude app auto-approves tool calls in this project: `print_preview` shows the summary and hands out a one-time code, valid 10 minutes for that file and plate only, and `start_print` refuses without it. `stop_print` refuses without an explicit yes. This can be switched off with `print_needs_approval: false` in `tools/bambu_config.json`, but then nothing stands between a request and a moving print head.
+
 
 - **Starting a print.** Show the summary first (file, plate, filament per AMS slot, print time, filament used), then wait for a yes. Never start one without it, even if asked earlier in the conversation.
 - Pausing is fine when asked; **stopping** a print needs a yes.
@@ -114,10 +115,21 @@ Applies to the Bambu Studio MCP (plan: `BAMBU_MCP_PLAN.md`).
 
 - ✅ **Decided 2026-09-18: the printer is reached through Bambu Cloud**, not over the LAN. The printer stays signed in to the Bambu account, with **LAN-only Mode off** and **Developer Mode off** — either one turns the cloud off. The Handy app and printing from away keep working.
 - This replaces the earlier Developer Mode decision. There is no `/bf-printer-mode` command.
-- **What cloud can do:** printer status, the AMS contents, pause, resume, stop, and starting a file that is already on the printer's SD card.
+- **What cloud can do:** printer status and the AMS contents. (Pause, resume, stop and starting a file on the SD card worked over the cloud until the 2026 firmware lockdown; see below.)
 - **What cloud cannot do:** there is no way to send a sliced file to the printer over the cloud — no such endpoint exists. Sliced files reach the printer through Bambu Studio or the Handy app. The camera is also LAN-only on a P1S.
 - So the flow is: this project builds and slices the file, you send it with Bambu Studio, and the MCP watches and controls the print from there. If sending files automatically ever matters more than the Handy app does, that needs the printer's LAN address and access code, and the LAN path would have to be built.
 - Signing in uses the account email and password and usually an emailed verification code. The token lasts about three months and cannot be refreshed, so signing in again is a hands-on step.
+
+**Getting a print to the printer (2026-09-19)** ✅
+
+- **Route `lan_cloud` (default):** the sliced file is copied onto the printer's SD card over the home network (FTPS, port 990, user `bblp`, the printer's access code), then started through Bambu Cloud. The printer stays in normal cloud mode. Its address is found from the printer's own network announcement (or `BAMBU_PRINTER_IP` in `.env`); the access code comes from Bambu Cloud (or `BAMBU_ACCESS_CODE` in `.env`) and is never stored or shown.
+- ⚠️ **It has (2026-09-19).** The first start sent from the tools was refused with `err_code 84033543` — *MQTT command verification failed*: this P1S's firmware now only accepts print commands signed by Bambu's own software. The home-network upload itself worked (address found automatically, access code from the cloud). **Prints now start from Bambu Studio**: the tools build, slice and preview the file and open it in Studio, and you press Print. Pause / resume / stop over the cloud are refused the same way (confirmed 2026-09-19 with a pause) — use Studio's Device tab, Handy, or the printer's screen. After the first refusal the tools don't send them any more; they answer straight away with where to do it (`--retry` checks whether a firmware update lifted it). Reading status over the cloud still works.
+- ⚠️ **Bambu Studio must be 2.0 or newer to start prints (2026-09-19).** Studio 01.09.07.52 sent the job to the cloud fine — it showed in Handy's history as "printing" — but the printer ignored the start, because that version predates the signed commands. Keep Studio updated; `bambu_setup_check` and `start` warn when it's too old. The only ways around it are Developer Mode (turns the cloud off, ruled out in section 7) or signing commands with keys taken out of Bambu's software (not done here).
+- If Bambu Connect gets installed, `print_route bambu_connect` makes starts open there instead.
+- **If Bambu's lockdown reaches the P1S** (network print starts only through Bambu Connect — already the case on the X1 series), the printer will refuse a start; the tool then switches the route to `bambu_connect` by itself, opens Bambu Connect with the file, and records why. `print_route` switches it back or forward by hand.
+- **Start options:** bed levelling on; flow calibration, timelapse, vibration calibration and first-layer inspection off.
+- **AMS slots:** each filament goes to a slot with exactly the same material (PLA-CF is not PLA), same colour first; a different colour is used with a note; a material that isn't loaded stops the print. Slots can be chosen by hand in the preview.
+- **MakerWorld files set up for an X1:** `retarget_to_p1s` swaps in the P1S's 69 machine settings (start/end G-code, nozzle, limits, bed no-print area) from `tools/bambu_template.3mf` and keeps the process and filament choices, like switching printers in Studio. The original isn't touched; a file already sliced for the X1 has that G-code removed and must be sliced again. It warns about abrasive filament on the P1S's stainless nozzle.
 
 ## 8. Building the print file ✅
 
@@ -127,5 +139,6 @@ The Bambu MCP (`tools/bambu.py`, `tools/bambu_slice.py`, `tools/bambu_mcp.py`) a
 - **Orientation follows section 3 in order:** a load-bearing name keeps the orientation it was modelled in; otherwise the largest flat face goes down, and fewest supports only decides between ways up that sit on a comparable amount of bed.
 - **`tools/bambu_template.3mf`** is a project saved from Bambu Studio with the P1S presets selected. Every setting this project doesn't touch is copied from it, so the file matches Bambu's defaults exactly. Without it the presets are built from scratch — workable, but not identical, and the report says so.
 - **Plate layout** uses Bambu Studio's own Arrange when Studio is installed and no part has a raft, keeping each part's way up. With a raft, a custom spacing, or no Studio, the project's own packer lays the plate out instead: centred, with room for each part's brim and raft, and clear of the P1S's no-print corner (18 × 28 mm, front-left). Studio's command-line Arrange ignores a raft's spread, which makes rafted parts' first layers collide.
+- ✅ **PLA and the bed temperature (2026-09-19):** the bed temperatures are set deliberately and are not to be changed. Studio warns on every PLA slice that the bed is above PLA's softening point and suggests opening the door; that warning is not wanted and is hidden in slice reports. No door rule.
 - **Sliced files** go in the project's `3mf/` folder as `<name>_<n>.gcode.3mf`, never overwriting. The slice report gives print time, filament per slot in grams and metres, whether support was generated, and whether any toolpath falls outside the printable area.
 - **Preset names:** machine `Bambu Lab P1S 0.4 nozzle`, process `0.20mm Standard @BBL X1C` (the P1S shares the X1C process family — there are no `@BBL P1S` process presets). Filament preset names differ between Studio versions, so each material lists the names it might have and the one actually installed is used.

@@ -1,0 +1,14 @@
+{
+  "print_route": "studio",
+  "print_route_changed": {
+    "from": "lan_cloud",
+    "to": "studio",
+    "why": "the printer refused a network start (err_code 84033543 \u2014 MQTT command verification failed); Bambu Connect isn't installed, Bambu Studio is",
+    "when": "2026-09-19T09:30:00"
+  },
+  "control_refused": {
+    "when": "2026-09-19T10:30:00",
+    "command": "pause",
+    "err_code": 84033543
+  }
+}
