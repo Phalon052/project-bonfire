@@ -945,13 +945,24 @@ def main():
     act_fn = lambda verdict, status, picture, cfg: acted.append(verdict) or {"paused": False}
     r = bw["check_once"]({}, cfg_w, _status=lambda: {"state": "idle"})
     check("idle: no picture, sleeps idle_poll_min", (r["checked"], r["next_in_s"]), (False, 180.0))
-    r = bw["check_once"]({}, cfg_w, _status=printing(1), _snapshot=shot_fn)
-    check("first layer: waits, no picture yet", r["checked"], False)
+    for stg, what in ((2, "heatbed preheating"), (14, "cleaning nozzle tip"),
+                      (1, "auto bed leveling")):
+        r = bw["check_once"]({}, cfg_w, _status=lambda s=stg: dict(printing()(), stage_id=s),
+                             _snapshot=shot_fn)
+        check("%s: no picture yet, looks again in a minute" % what,
+              (r["checked"], r["next_in_s"]), (False, 60.0))
+    r = bw["check_once"]({}, cfg_w, _status=lambda: dict(printing(1)(), stage_id=0),
+                         _snapshot=shot_fn,
+                         _judge=lambda *a: {"verdict": "ok", "problem": "", "confidence": 0.0})
+    check("set-up done, layer 1: first picture straight away", r["checked"], True)
+    check("stage names read from the report",
+          bc["parse_status"]({"gcode_state": "RUNNING", "stg_cur": 14})["stage"], "cleaning nozzle tip")
+    check("no stage between jobs", bc["parse_status"]({"gcode_state": "IDLE", "stg_cur": 255})["stage_id"], None)
     st = {}
     r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn,
                          _judge=lambda *a: {"verdict": "ok", "problem": "", "confidence": 0.1},
                          _act=act_fn)
-    check("ok: next picture in interval_min", (r["next_in_s"], acted), (420.0, []))
+    check("ok: next picture in interval_min", (r["next_in_s"], acted), (300.0, []))
     check("the picture is kept for the next comparison", st.get("previous"), pic)
     r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn,
                          _judge=lambda *a: {"verdict": "problem", "problem": "spaghetti",
@@ -968,6 +979,52 @@ def main():
                          _judge=lambda *a: {"verdict": "problem", "problem": "maybe",
                                             "confidence": 0.3}, _act=act_fn)
     check("low-confidence problem: logged, not acted on", acted, [])
+
+    jo = bw["judge_obico"]
+    ocfg = dict(bw["DEFAULTS"])
+    det = lambda *confs: (lambda p: [["failure", c, [1, 2, 3, 4]] for c in confs])
+    check("score is the sum of the detections' confidence",
+          bw["obico_score"]([["failure", 0.3, []], ["failure", 0.25, []]]), 0.55)
+    ost = {}
+    v = jo(pic, ost, ocfg, _detect=det())
+    check("clean picture: ok", (v["verdict"], v["score"]), ("ok", 0.0))
+    v = jo(pic, ost, ocfg, _detect=det(0.5))
+    check("one moderate picture: unsure (looks again first)", v["verdict"], "unsure")
+    v = jo(pic, ost, ocfg, _detect=det(0.5, 0.2))
+    check("keeps looking bad: problem", (v["verdict"], v["decided"]), ("problem", True))
+    v = jo(pic, {}, ocfg, _detect=det(0.9))
+    check("one strong picture: problem at once", v["verdict"], "problem")
+    served = []
+
+    class FakeServe:
+        pass
+    got = bw["obico_detect"](pic, ocfg, _get=lambda p: served.append(p) or [["failure", 0.4, [0, 0, 1, 1]]])
+    check("detector call returns its detections", (got[0][1], served), (0.4, [pic]))
+    acted.clear()
+    st2 = {}
+    r = bw["check_once"](st2, dict(ocfg), _status=printing(), _snapshot=shot_fn,
+                         _act=act_fn,
+                         _judge=lambda *a: dict(jo(pic, st2, ocfg, _detect=det(0.9))))
+    check("a detector 'problem' is acted on even under act_on", len(acted), 1)
+
+    print("\n== Obico's detector run locally (post-processing) ==")
+    try:
+        import numpy as _np
+    except ImportError:
+        _np = None
+    if _np is None:
+        note("skipped", "numpy isn't installed (python -m pip install onnxruntime numpy pillow)")
+    else:
+        bd = runpy.run_path(os.path.join(HERE, "bambu_detect.py"))
+        boxes = _np.array([[[[0.1, 0.1, 0.3, 0.3]], [[0.12, 0.12, 0.31, 0.31]],
+                            [[0.6, 0.6, 0.7, 0.7]], [[0.8, 0.8, 0.9, 0.9]]]], dtype=_np.float32)
+        confs = _np.array([[[0.6], [0.4], [0.3], [0.05]]], dtype=_np.float32)
+        dets = bd["post_process"]([boxes, confs], 1000, 500)
+        check("below the 0.08 threshold is dropped, overlaps merged",
+              [round(d[1], 2) for d in dets], [0.6, 0.3])
+        check("box in picture pixels (centre x, centre y, w, h)",
+              [round(v) for v in dets[0][2]], [200, 100, 200, 100])
+        check("score is the sum", bd["score"]([[n, c, b] for n, c, b in dets]), 0.9)
 
     print("\n== more than one filament in project_settings (Studio 2.x layout) ==")
     proot = os.path.join(tmp, "presets")

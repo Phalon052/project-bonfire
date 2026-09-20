@@ -76,26 +76,23 @@ are examples: use wherever your Project Bonfire folder and Python actually are.
 
 8. **Print watch (optional).** While a print runs, takes a camera picture every 5 minutes, has
    a failure detector look at it, and pops up a window on this PC if something looks wrong.
-   The detector is Obico's open-source spaghetti detector, running locally in Docker: free, no
-   account, nothing leaves the PC.
-   1. Install **Docker Desktop** (docker.com), start it, and in its Settings → General tick
-      *Start Docker Desktop when you sign in*.
-   2. Optional: put a long random string in `.env` as `OBICO_ML_TOKEN=` so only the watch can
-      use the detector.
-   3. From the Project Bonfire folder:
-      ```powershell
-      python tools\bambu_watch.py obico up     # first time: downloads ~1-2 GB, a few minutes
-      python tools\bambu_camera.py snapshot    # a picture to test with
-      python tools\bambu_watch.py obico test   # the detector scores it (0 = nothing wrong)
-      python tools\bambu_watch.py install      # start the watch hidden with Windows, and now
-      python tools\bambu_watch.py status       # installed? running? detector answering?
-      ```
+   The detector is Obico's open-source spaghetti detector, run right on this PC: free, no
+   account, no Docker, nothing leaves the PC. From the Project Bonfire folder:
+   ```powershell
+   python -m pip install onnxruntime numpy pillow
+   python tools\bambu_detect.py setup       # downloads the detector model, once
+   python tools\bambu_camera.py snapshot    # a picture to test with
+   python tools\bambu_watch.py obico test   # the detector scores it (about 0 = nothing wrong)
+   python tools\bambu_watch.py install      # start the watch hidden with Windows, and now
+   python tools\bambu_watch.py status       # installed? running? judge ready?
+   ```
    The watch sleeps while the printer is idle. It can't pause the print itself (the firmware
    refuses), so the pop-up says to pause in Studio's Device tab, Handy or on the screen, and
    *Yes* opens the picture and Studio. Pictures go to `tools\camera_snapshots\` (git-ignored),
    problem pictures to its `problems\` folder, and a log to `watch.log` there. Timing and
    sensitivity: `camera_watch` in `tools\bambu_config.json` (`interval_min`, `alert_score`,
-   `spike_score`; lower scores = more sensitive).
+   `spike_score`; lower scores = more sensitive). A PC that can run Docker can use Obico's own
+   server instead (`"judge": "obico_docker"`, then `python tools\bambu_watch.py obico up`).
 
 Optional, in `.env` (see `.env.example`): `BAMBU_PRINTER_SERIAL` if the account has more
 than one printer, `BAMBU_PRINTER_IP` if the printer isn't found on the network by itself,

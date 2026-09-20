@@ -627,6 +627,14 @@ def parse_ams_settings(pr):
             "read_on_power_on": flag("power_on_flag")}
 
 
+def _stage(value):
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return None
+    return None if v in (-1, 255) else v
+
+
 def _colour(rgba):
     """AMS colours come as RRGGBBAA; Studio and the presets use #RRGGBB."""
     if not rgba:
@@ -640,6 +648,29 @@ def _remain(value):
     except (TypeError, ValueError):
         return None
     return v if v >= 0 else None       # -1 = unknown (non-Bambu spool)
+
+
+# stg_cur: what the printer is doing within a job (Bambu's own numbering, as
+# shown on its screen). 0 = printing; the rest are set-up steps and pauses.
+STAGES = {
+    0: "printing", 1: "auto bed leveling", 2: "heatbed preheating",
+    3: "vibration compensation", 4: "changing filament", 5: "M400 pause",
+    6: "paused: filament ran out", 7: "heating hotend", 8: "calibrating extrusion",
+    9: "scanning bed surface", 10: "inspecting first layer",
+    11: "identifying build plate type", 12: "calibrating micro lidar",
+    13: "homing toolhead", 14: "cleaning nozzle tip",
+    15: "checking extruder temperature", 16: "paused by the user",
+    17: "paused: front cover fell off", 18: "calibrating micro lidar",
+    19: "calibrating extrusion flow", 20: "paused: nozzle temperature malfunction",
+    21: "paused: heat bed temperature malfunction", 22: "filament unloading",
+    23: "paused: skipped step", 24: "filament loading", 25: "calibrating motor noise",
+    26: "paused: AMS lost", 27: "paused: low speed of the heat break fan",
+    28: "paused: chamber temperature control error", 29: "cooling chamber",
+    30: "paused by the G-code", 31: "motor noise showoff",
+    32: "paused: nozzle filament covered detected",
+    33: "paused: cutter error", 34: "paused: first layer error",
+    35: "paused: nozzle clog",
+}
 
 
 def parse_status(pr, device=None):
@@ -657,6 +688,8 @@ def parse_status(pr, device=None):
         "state": STATES.get(state, state.lower() or "unknown"),
         "raw_state": state,
         "job": pr.get("subtask_name") or pr.get("gcode_file") or "",
+        "stage_id": _stage(pr.get("stg_cur")),
+        "stage": STAGES.get(_stage(pr.get("stg_cur")), ""),
         "progress_pct": pr.get("mc_percent"),
         "layer": pr.get("layer_num"),
         "total_layers": pr.get("total_layer_num"),

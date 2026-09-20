@@ -789,14 +789,35 @@ def camera_check():
 def camera_watch(action: str = "status") -> str:
     """
     The background print watch on this PC (tools/bambu_watch.py): a picture
-    every few minutes while printing, judged by a small Claude model through
-    the Claude API; on a problem it tries to pause (the P1S firmware refuses)
-    and pops up a window. action: status | once (one check now) | install
-    (start with Windows, and start now) | uninstall | on | off.
-    Settings: "camera_watch" in bambu_config (interval_min, act_on, model...).
+    every few minutes while printing, scored by Obico's spaghetti detector
+    run locally with onnxruntime (or in Docker, or the Claude API); on a
+    problem it tries to pause (the P1S firmware refuses) and pops up a window.
+    action: status | setup (download the detector model) | test (score the
+    newest snapshot) | once (one check now) | install (start with Windows, and
+    start now) | uninstall | on | off.
+    Settings: "camera_watch" in bambu_config (interval_min, alert_score,
+    spike_score, judge...).
     """
     if action == "status":
         return _ok({"ok": True, "report": bw["status_report"]()})
+    if action == "setup":
+        det = runpy.run_path(os.path.join(TOOLS, "bambu_detect.py"))
+        try:
+            return _ok({"ok": True, "model": det["setup"](progress=False)})
+        except det["DetectorError"] as exc:
+            return _fail(str(exc))
+    if action == "test":
+        shots = sorted(f for f in os.listdir(bw["SNAP_DIR"]) if f.endswith(".jpg")) \
+            if os.path.isdir(bw["SNAP_DIR"]) else []
+        if not shots:
+            return _fail("No snapshot yet — take one with camera_snapshot first.")
+        pic = os.path.join(bw["SNAP_DIR"], shots[-1])
+        try:
+            det = bw["local_detect"](pic)
+        except Exception as exc:
+            return _fail(str(exc))
+        return _ok({"ok": True, "picture": pic, "score": bw["obico_score"](det),
+                    "detections": det})
     if action == "once":
         try:
             r = bw["check_once"]({})
@@ -814,7 +835,7 @@ def camera_watch(action: str = "status") -> str:
         cfg["camera_watch"] = cw
         write_config(cfg)
         return _ok({"ok": True, "camera_watch": cw})
-    return _fail("action must be status, once, install, uninstall, on or off")
+    return _fail("action must be status, setup, test, once, install, uninstall, on or off")
 
 
 @mcp.tool()

@@ -36,6 +36,9 @@ tools/bambu_cloud.local.json.tmp
 tools/bambu_print.local.json
 # P1S camera snapshots (pictures of your printer / room)
 tools/camera_snapshots/
+# Obico detector model, downloaded by tools/bambu_detect.py setup
+tools/obico/model-weights.onnx
+tools/obico/model-weights.onnx.part
 # Bambu Studio preset template — saved from your own Studio, so it's per-machine
 # (and Studio writes your account number into it). See bambu_presets.py.
 tools/bambu_template.3mf
