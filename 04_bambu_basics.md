@@ -75,6 +75,29 @@ When requested to get something ready to print:
 - In the report, also list:
   - any approved settings that were changed, and why
   - the hardware committed, and anything short (the tool adds it to the shopping list)
+  - ✅ **the price of each plate, and the total for that .3mf** (2026-09-23), always, for the
+    file just built — never an earlier version or another project's file:
+
+    **Price = ((filament g × 0.013) + (2 × print hours)) + 15%**, rounded to the cent.
+
+    Grams and hours are the slicer's figures for that plate, so the file must be sliced first
+    (`prepare_and_slice` does both; for a 3MF that was only built, slice it before reporting).
+    The slice report prints the price by itself; on its own use `tools/pricing.py` →
+    `price_3mf("<file>.gcode.3mf")`, or `plate_price(grams, hours)`. Never estimate the price
+    from the model — if the slice has no weight or time, say so instead of guessing.
+- ✅ **Set the monitoring mode for the print** (2026-09-20) with `monitor_mode(project, mode)`,
+  which saves `<name>.monitor.json` beside the 3MF. The watch reads it by itself when that job
+  starts. Pick from what is on the plate, and say which and why in the report:
+
+  | What's on the plate | Mode |
+  |---|---|
+  | Medium part, solid footprint, nothing unusual | `default` — a picture every 8 min |
+  | A batch of small or thin parts, or a wide flat part (organiser, tray, lid) | `early` — every 30 s for the first 10 min, then 8 min. One part breaking loose early wrecks the rest |
+  | Detailed or thin models where certain layers are the risk | `complex` — plus `windows` over those layers |
+  | Taller than its footprint | `tall` — tightens as it gets top-heavy |
+  | Long, and nobody in the room | `overnight` — fewer pictures, lower bar, stops the print itself |
+  | Test pieces, calibration, one small part | `quick` |
+  | Tuning the detector, or standing next to it | `watch_only` — records, never alerts |
 
 ## 5. Splitting parts and assembly
 
@@ -87,13 +110,24 @@ When requested to get something ready to print:
 - **[Fill out] Plate layout.** All pieces on one plate when they fit, or one plate per piece?
 - **[Fill out] Naming.** How split pieces are named, e.g. `<object name>_a`, `<object name>_b`.
 
-## 6. Printable minimums [Fill out]
+## 6. Printable minimums ✅ (walls, pins, text) · chamfer [Fill out]
 
-Preferred minimums on the P1S with 0.4 mm nozzle, used to flag features too thin to print:
+P1S, 0.4 mm nozzle, Bambu's *0.20mm Standard* process (2 wall loops, 0.42 mm outer / 0.45 mm inner
+lines). Taken from public design guides (2026-09-20); replace with measured values once the tolerance
+test is printed.
 
-- Minimum wall or feature thickness
-- Minimum pin or text size
-- Default chamfer or fillet on outside edges (or none)
+| Feature | Minimum | Why |
+|---|---|---|
+| **Wall, absolute** | **0.8 mm** | 2 × nozzle — under this a wall can't get two perimeters and prints as one weak line, or not at all (Raise3D) |
+| **Wall, recommended** | **1.2 mm** | 3 lines; the practical minimum for anything that carries load (Formlabs, Raise3D; Xometry says 1–2 mm for unsupported walls) |
+| Vertical pin / post | 3 mm Ø | thinner free-standing pins wobble and break (Formlabs) |
+| Engraved or embossed text / detail | 0.6 mm wide, ≥ 0.6 mm deep/high | narrower than about 1.5 lines disappears (Formlabs) |
+
+- **The export gate checks walls:** `tools/export_gate.py` warns below 0.8 mm ("too thin") and between
+  0.8 and 1.2 mm ("below recommended"). Warnings don't block the export — a thin fin or label can be
+  intentional — but a load-bearing wall under 1.2 mm is a failed criteria row (`01_blender_basics.md` §5).
+- Wall thicknesses that are multiples of the line width (0.8, 1.2, 1.6, 2.0 mm) print cleanest.
+- [Fill out] Default chamfer or fillet on outside edges (or none).
 
 ## 7. Allowed actions in Bambu Studio ✅
 
@@ -142,5 +176,5 @@ The Bambu MCP (`tools/bambu.py`, `tools/bambu_slice.py`, `tools/bambu_mcp.py`) a
 - **`tools/bambu_template.3mf`** is a project saved from Bambu Studio with the P1S presets selected. Every setting this project doesn't touch is copied from it, so the file matches Bambu's defaults exactly. Without it the presets are built from scratch — workable, but not identical, and the report says so.
 - **Plate layout** uses Bambu Studio's own Arrange when Studio is installed and no part has a raft, keeping each part's way up. With a raft, a custom spacing, or no Studio, the project's own packer lays the plate out instead: centred, with room for each part's brim and raft, and clear of the P1S's no-print corner (18 × 28 mm, front-left). Studio's command-line Arrange ignores a raft's spread, which makes rafted parts' first layers collide.
 - ✅ **PLA and the bed temperature (2026-09-19):** the bed temperatures are set deliberately and are not to be changed. Studio warns on every PLA slice that the bed is above PLA's softening point and suggests opening the door; that warning is not wanted and is hidden in slice reports. No door rule.
-- **Sliced files** go in the project's `3mf/` folder as `<name>_<n>.gcode.3mf`, never overwriting. The slice report gives print time, filament per slot in grams and metres, whether support was generated, and whether any toolpath falls outside the printable area.
+- **Sliced files** go in the project's `3mf/` folder as `<name>_<n>.gcode.3mf`, never overwriting. The slice report gives print time, filament per slot in grams and metres, whether support was generated, whether any toolpath falls outside the printable area, and the price of each plate and of the whole file (section 4).
 - **Preset names:** machine `Bambu Lab P1S 0.4 nozzle`, process `0.20mm Standard @BBL X1C` (the P1S shares the X1C process family — there are no `@BBL P1S` process presets). Filament preset names differ between Studio versions, so each material lists the names it might have and the one actually installed is used.

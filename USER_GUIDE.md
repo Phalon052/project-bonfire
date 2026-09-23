@@ -94,6 +94,37 @@ are examples: use wherever your Project Bonfire folder and Python actually are.
    `spike_score`; lower scores = more sensitive). A PC that can run Docker can use Obico's own
    server instead (`"judge": "obico_docker"`, then `python tools\bambu_watch.py obico up`).
 
+   **Monitoring modes.** Each 3MF can carry its own watching plan in a
+   `<name>.monitor.json` next to it, and the watch loads it by matching the job name — nothing
+   to run at print time. Ask Claude to set it, or run
+   `python tools\bambu_modes.py set <project> <mode>`; `python tools\bambu_modes.py modes`
+   lists them: `default` (8 min), `early` (30 s bursts for the first 10 min, for batches of
+   small parts and wide flat ones), `complex` (bursts plus your own layer windows), `tall`
+   (tightens with height), `overnight` (fewer pictures, lower bar, stops the print itself),
+   `quick` (test prints), `watch_only` (records, never alerts). Every mode also does free
+   checks that need no picture — the printer's own error codes, a stalled layer count (a clog),
+   a nozzle far below target — and a finish shot two layers from the end.
+
+   A print goes: two minutes of quiet while the printer downloads and sets up, then status
+   checks every 10 seconds (trouble here stops it before a gram is wasted), then 80 seconds
+   after the first layer goes down, then pictures on the mode's cadence.
+
+   **Stopping.** The firmware refuses stop and pause from here, so stopping means pressing the
+   button in Bambu Studio. Point at it once:
+
+   ```
+   python tools\bambu_studio_ui.py calibrate stop      # hover over Studio's Stop button
+   python tools\bambu_studio_ui.py calibrate confirm   # ...and the confirmation button
+   python tools\bambu_studio_ui.py test                # finds both, clicks nothing
+   ```
+   Studio has to be open on the Device tab with the print running. If it can't see the button
+   clearly, or sees two things that look alike, it clicks nothing and says so.
+
+   **When the detector flags something**, modes that ask first keep the picture and write a
+   question. In your next Claude session, ask about the print: Claude looks at the picture and
+   either stops the print or flags it a false positive in the project's `Error Report` folder.
+   After three false positives on one print the watch keeps logging but stops alerting.
+
 Optional, in `.env` (see `.env.example`): `BAMBU_PRINTER_SERIAL` if the account has more
 than one printer, `BAMBU_PRINTER_IP` if the printer isn't found on the network by itself,
 and `BAMBU_STUDIO_PATH` if Studio isn't in the usual place.
@@ -103,6 +134,10 @@ and `BAMBU_STUDIO_PATH` if Studio isn't in the usual place.
 - Ask in plain words, e.g. *"Get the shelf bracket ready to print."* Claude picks the
   orientation, supports and raft (within `04_bambu_basics.md`), lays out the plate, slices,
   and reports print time, filament per slot and anything Studio warned about.
+- **Price:** every ready-to-print report ends with the price of each plate and the total for
+  that .3mf: **((filament g × 0.013) + (2 × print hours)) + 15%**. To price a file by hand:
+  `python tools\pricing.py <grams> <hours>`, or `python tools\pricing.py <file>.gcode.3mf`.
+  The rates are at the top of `tools/pricing.py`.
 - **Starting:** the file opens in Bambu Studio and **you press Print**. The P1S firmware
   (2025 on) only accepts start, pause, resume and stop commands signed by Bambu's own apps,
   so the tools can't send them.
@@ -123,6 +158,36 @@ and `BAMBU_STUDIO_PATH` if Studio isn't in the usual place.
 | `bambu` missing from Settings → Developer | `"mcpServers"` isn't at the top level of the config, or a comma/brace is off |
 | `No module named 'mcp.server.fastmcp'` | `mcp` 2.x installed: `python -m pip install "mcp[cli]<2"` |
 | Setup check says Studio is too old right after updating | Run it again; if it persists, check `bambu-studio.exe` → Properties → Details |
+
+## Measuring from photos (ArUco markers)
+
+For parts measured from a photo on the cutting mat. Four printed markers give the photo a true
+scale and a straight-down view, so nothing is scaled from the part's own stated size.
+
+**Once:**
+
+1. `python -m pip install opencv-python numpy`
+2. `python tools\photo.py sheet` → print `tools\photo_markers.pdf` at **100 % / Actual size**
+   (not *Fit to page*; `--a4` for A4 paper). Check the 100 mm bar with a ruler.
+3. Cut out the four tiles. Tape them flat at the mat's corners of the working area: ID 0 top-left,
+   1 top-right, 2 bottom-right, 3 bottom-left, each with its centre lines on grid lines.
+4. Count the grid between tile centres and record it:
+   `python tools\photo.py layout --width <ID 0 to ID 1, mm> --height <ID 0 to ID 3, mm>`.
+   The layout lives in `tools/photo_markers.json` (committed), so every session measures the same way.
+
+**Each photo:** part inside the markers, all four tiles in frame, phone roughly straight down, no
+shadows over the tiles. Then ask Claude to measure it, or run
+`python tools\photo.py rectify <photo.jpg>`. That writes beside the photo:
+`_rectified.png` (10 px per mm), `_rectified_grid.png` (mm grid, 0 at ID 0's centre) and
+`_rectified.json` (fit quality and warnings).
+
+- Sizes are true **on the marker plane**. A thick part's top face sits above it and reads a little
+  big. For thick parts put the tiles on a shim of the part's height and record it
+  (`layout --plane <mm>`), or caliper the dimensions that matter.
+- Trust a number only with `fit_rms_mm` under 0.5 and no warnings. Warnings name the cause:
+  a marker missing, a sheet not printed at 100 %, a tile turned off the grid, a spacing that
+  doesn't match.
+- Calipers still decide anything that has to fit. The photo gives the shape and the layout.
 
 ## Commands
 

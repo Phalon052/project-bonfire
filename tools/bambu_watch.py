@@ -72,7 +72,7 @@ OBICO_DEFAULT_URL = "http://127.0.0.1:3333"
 DEFAULTS = {
     "enabled": True,
     "judge": "obico",           # obico (local model) | obico_docker | claude (API)
-    "interval_min": 5,          # between pictures while printing (5-10 asked for)
+    "interval_min": 8,          # fallback cadence when a project sets no mode
     "idle_poll_min": 3,         # between status checks while idle
     "model": "claude-haiku-4-5",
     "act_on": 0.5,              # confidence at or above which a problem is acted on
@@ -90,7 +90,13 @@ DEFAULTS = {
     # where the detector container fetches pictures from this PC
     "serve_host": "host.docker.internal",
     "serve_bind": "127.0.0.1",
+    # Stopping: the firmware refuses stop/pause from here, so the only way is
+    # to press the button in Bambu Studio (tools/bambu_studio_ui.py, calibrated
+    # once). Modes that act first use it; the others ask first.
+    "stop_via_studio": True,
 }
+
+REVIEW_DIR = os.path.join(SNAP_DIR, "review")
 
 ACTIVE = ("printing", "preparing")
 
@@ -446,8 +452,9 @@ def popup(title, message, picture=None):
     threading.Thread(target=show, daemon=False).start()
 
 
-def act(verdict, status, picture, cfg):
-    """Pause (if the printer allows it), pop up, keep the picture."""
+def act(verdict, status, picture, cfg, plan=None):
+    """Keep the picture, try to pause, pop up — and, for a mode that acts
+    first (overnight), stop the print through Studio rather than ask."""
     os.makedirs(PROBLEM_DIR, exist_ok=True)
     kept = os.path.join(PROBLEM_DIR, os.path.basename(picture))
     try:
@@ -455,9 +462,13 @@ def act(verdict, status, picture, cfg):
             dst.write(src.read())
     except OSError:
         kept = picture
+    plan = plan or {}
+    stopped = None
+    if plan.get("act_first"):
+        stopped = studio_stop(verdict.get("problem") or "detector", cfg)
     paused = False
     pause_note = ""
-    if cfg["try_pause"]:
+    if cfg["try_pause"] and not (stopped or {}).get("ok"):
         try:
             r = _mod("bambu_print.py")["pause"](retry=True)
             paused = bool(r.get("ok"))
@@ -468,7 +479,8 @@ def act(verdict, status, picture, cfg):
                                         verdict["problem"], pause_note))
     if cfg["popup"]:
         what = verdict["problem"] or "something looks wrong"
-        head = ("Print PAUSED — " if paused else "Print problem — ") + (status.get("job") or "")
+        head = ("Print STOPPED — " if (stopped or {}).get("ok") else
+                "Print PAUSED — " if paused else "Print problem — ") + (status.get("job") or "")
         body = ("%s\n\n%s%% done, layer %s of %s. Claude's confidence: %.0f%%.\n\n%s"
                 % (what, status.get("progress_pct"), status.get("layer"),
                    status.get("total_layers"), verdict["confidence"] * 100,
@@ -477,73 +489,314 @@ def act(verdict, status, picture, cfg):
                    "from Bambu's apps). Pause or stop it in Bambu Studio's Device "
                    "tab, Handy, or on the printer's screen."))
         popup(head, body, kept)
-    return {"paused": paused, "pause_note": pause_note, "kept": kept}
+    return {"paused": paused, "pause_note": pause_note, "kept": kept, "stopped": stopped}
+
+
+
+# ── modes: which plan this print is on ───────────────────────────────
+
+def modes():
+    return _mod("bambu_modes.py")
+
+
+def plan_for(job, cfg, state):
+    """The monitoring plan for the running job: the project's sidecar if it has
+    one, else the default mode. Worked out once per print."""
+    if state.get("plan") is not None and state.get("plan_job") == job:
+        return state["plan"]
+    bm = modes()
+    found = None
+    try:
+        found = bm["find_config"](job)
+    except Exception as exc:
+        log("couldn't read the monitoring config (%s) — using the default mode" % exc)
+    try:
+        plan = bm["resolve"]((found or {}).get("config"), cfg)
+    except Exception as exc:
+        log("monitoring config not usable (%s) — using the default mode" % exc)
+        plan = bm["resolve"](None, cfg)
+    state["plan"], state["plan_job"] = plan, job
+    state["project"] = (found or {}).get("project")
+    state["three_mf"] = (found or {}).get("three_mf")
+    log("mode %s — a picture every %g min%s%s"
+        % (plan["mode"], plan["cadence_min"],
+           (", bursts of %gs x %d first" % (plan["burst"]["every_s"], plan["burst"]["cycles"]))
+           if plan.get("burst") else "",
+           (" (%s)" % plan["why"]) if plan.get("why") else ""))
+    return plan
+
+
+def report(state, entry):
+    """Add an entry to this print's report in the project (if we know it)."""
+    if not state.get("project"):
+        return None
+    bm = modes()
+    path = state.get("report_path")
+    if not path:
+        path = bm["report_path"](state["project"], state.get("job") or "print")
+        state["report_path"] = path
+    try:
+        _path, index = bm["write_report"](path, dict(entry, job=state.get("job"),
+                                                     mode=(state.get("plan") or {}).get("mode"),
+                                                     three_mf=state.get("three_mf")))
+        state["report_index"] = index
+        return path
+    except OSError as exc:
+        log("couldn't write the error report: %s" % exc)
+        return None
+
+
+def studio_stop(reason="", cfg=None):
+    """Stop the print by pressing Studio's own Stop button."""
+    cfg = cfg or settings()
+    if not cfg.get("stop_via_studio", True):
+        return {"ok": False, "note": "stopping through Studio is switched off"}
+    try:
+        r = _mod("bambu_studio_ui.py")["stop"]()
+    except Exception as exc:
+        r = {"ok": False, "note": str(exc)}
+    log("STOP (%s): %s" % (reason, r.get("note") or r))
+    return r
+
+
+# ── a detection somebody should look at ──────────────────────────────
+
+def ask_for_review(verdict, status, picture, state, plan):
+    """Keep the picture and a short question for the next Claude session."""
+    os.makedirs(REVIEW_DIR, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    kept = os.path.join(REVIEW_DIR, "review_%s.jpg" % stamp)
+    try:
+        with open(picture, "rb") as src, open(kept, "wb") as dst:
+            dst.write(src.read())
+    except OSError:
+        kept = picture
+    ask = {"at": datetime.datetime.now().isoformat(timespec="seconds"),
+           "picture": kept, "answered": False,
+           "question": "The detector flagged %s. Is it real?"
+                       % (verdict.get("problem") or "a possible print failure"),
+           "score": verdict.get("score"), "detections": verdict.get("detections"),
+           "job": state.get("job"), "mode": plan.get("mode"),
+           "layer": status.get("layer"), "total_layers": status.get("total_layers"),
+           "progress_pct": status.get("progress_pct"),
+           "report": state.get("report_path"), "entry": state.get("report_index")}
+    path = os.path.join(REVIEW_DIR, "review_%s.json" % stamp)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(ask, fh, indent=2)
+    except OSError as exc:
+        log("couldn't write the review request: %s" % exc)
+        return None
+    return path
+
+
+def pending_reviews():
+    try:
+        files = sorted(f for f in os.listdir(REVIEW_DIR) if f.endswith(".json"))
+    except OSError:
+        return []
+    out = []
+    for name in files:
+        try:
+            with open(os.path.join(REVIEW_DIR, name), encoding="utf-8") as fh:
+                ask = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not ask.get("answered"):
+            ask["file"] = os.path.join(REVIEW_DIR, name)
+            out.append(ask)
+    return out
+
+
+def answer_review(real, note="", path=None):
+    """
+    Answer the oldest open review. real=False marks it a false positive in the
+    project's report; real=True stops the print.
+    """
+    asks = pending_reviews()
+    ask = None
+    if path:
+        ask = next((a for a in asks if a["file"] == path), None)
+    elif asks:
+        ask = asks[0]
+    if not ask:
+        return {"ok": False, "error": "Nothing is waiting to be looked at."}
+    ask["answered"] = True
+    ask["real"] = bool(real)
+    ask["note"] = note
+    try:
+        with open(ask["file"], "w", encoding="utf-8") as fh:
+            json.dump(ask, fh, indent=2)
+    except OSError:
+        pass
+    out = {"ok": True, "picture": ask.get("picture"), "real": bool(real)}
+    if not real and ask.get("report"):
+        try:
+            out["false_positives"] = modes()["mark_false_positive"](
+                ask["report"], ask.get("entry", -1), note)
+        except Exception as exc:
+            out["note"] = "couldn't flag it in the report (%s)" % exc
+    if real:
+        out["stop"] = studio_stop("confirmed by review")
+    log("review answered: %s%s" % ("a real problem" if real else "false positive",
+                                   (" — %s" % note) if note else ""))
+    return out
 
 
 # ── one check, and the loop ──────────────────────────────────────────
 
-def check_once(state=None, cfg=None, _status=None, _snapshot=None, _judge=None, _act=None):
+def false_positives(state):
+    """How many of this print's flags have been looked at and called wrong."""
+    path = state.get("report_path")
+    if not path:
+        return 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return 0
+    return sum(1 for e in doc.get("entries") or [] if e.get("false_positive"))
+
+
+def check_once(state=None, cfg=None, _status=None, _snapshot=None, _judge=None,
+               _act=None, _now=None):
     """
     One pass. Returns {"state", "checked", "verdict"?, "next_in_s"}.
-    `state` carries the previous picture and the current job between passes.
+    `state` carries the job, its plan and the last picture between passes.
+
+    A print goes through three phases: set-up (status only, every few seconds,
+    no pictures — trouble here stops the print before a gram is wasted), the
+    first minute or so of printing, and then pictures at the plan's cadence.
     """
     cfg = cfg or settings()
     state = state if state is not None else {}
+    bm = modes()
+    now = (_now or (lambda: datetime.datetime.now().timestamp()))()
     status = (_status or _mod("bambu_cloud.py")["printer_status"])()
     printer_state = status.get("state")
-    idle_wait = 60 * float(cfg["idle_poll_min"])
     if printer_state not in ACTIVE:
         if state.get("job"):
             log("print ended (%s): %s" % (printer_state, state.get("job")))
         state.clear()
-        return {"state": printer_state, "checked": False, "next_in_s": idle_wait}
+        return {"state": printer_state, "checked": False,
+                "next_in_s": 60 * float(cfg["idle_poll_min"])}
 
     job = status.get("job")
-    if state.get("job") != job:
-        log("print started: %s" % job)
-        state.clear()
-        state["job"] = job
     layer = status.get("layer") or 0
     stage = status.get("stage_id")
-    setting_up = printer_state == "preparing" or (stage not in (None, 0))
-    if setting_up or layer < 1 or layer <= int(cfg["skip_first_layers"]):
-        # still heating / cleaning / levelling (or paused): look again in a minute
-        if stage and state.get("stage") != stage:
-            state["stage"] = stage
-            log("%s — waiting" % (status.get("stage") or "setting up"))
-        return {"state": printer_state, "checked": False, "next_in_s": 60.0}
-    state.pop("stage", None)
+    setting_up = printer_state == "preparing" or (stage not in (None, 0)) or layer < 1
+    if state.get("job") != job:
+        state.clear()
+        state.update({"job": job, "job_seen_at": now, "pictures": 0, "last_picture_at": 0})
+        # A watch started in the middle of a print doesn't wait for a start it missed.
+        state["phase"] = "prep" if setting_up else ("starting" if layer <= 2 else "printing")
+        if state["phase"] == "starting":
+            state["printing_since"] = now
+        log("print started: %s" % job)
+    plan = plan_for(job, cfg, state)
 
+    if state.get("phase") == "prep" and not setting_up:
+        state["phase"], state["printing_since"] = "starting", now
+        log("printing — first picture in %gs" % plan["start_delay_s"])
+    elif state.get("phase") == "starting" and not setting_up:
+        pass
+    if setting_up and stage and state.get("stage") != stage:
+        state["stage"] = stage
+        log("%s" % (status.get("stage") or "setting up"))
+
+    # What the printer says about itself, every pass, without a picture.
+    for trouble in bm["free_check"](plan, status, state, now):
+        key = trouble["what"]
+        if key in (state.get("told") or []):
+            continue
+        state.setdefault("told", []).append(key)
+        log("PRINTER SAYS: %s — %s" % (key, trouble["detail"]))
+        report(state, {"kind": "printer", "what": key, "detail": trouble["detail"],
+                       "layer": layer, "phase": state.get("phase")})
+        if trouble["serious"] and plan["stop_on_prep_error"] and state.get("phase") == "prep":
+            stopped = studio_stop(key, cfg)
+            report(state, {"kind": "stopped", "what": key, "result": stopped})
+            if cfg["popup"]:
+                popup("Print stopped before it started — %s" % (job or ""),
+                      "%s\n\n%s\n\n%s" % (key, trouble["detail"],
+                                            stopped.get("note") or ""))
+        elif trouble["serious"] and plan.get("alert", True) and cfg["popup"]:
+            popup("Printer problem — %s" % (job or ""),
+                  "%s\n\n%s\n\nLayer %s of %s." % (key, trouble["detail"], layer,
+                                                      status.get("total_layers")))
+
+    if state.get("rechecked") and state.get("phase") == "printing":
+        decided = {"action": "picture", "next_in_s": 0.0, "why": "another look"}
+    else:
+        decided = bm["plan_next"](plan, state, status, now, state.get("last_score"))
+    if decided["action"] != "picture":
+        return {"state": printer_state, "checked": False, "phase": state.get("phase"),
+                "why": decided["why"], "next_in_s": max(5.0, decided["next_in_s"])}
+
+    if state.get("phase") != "printing":
+        state["phase"] = "printing"
+    finish = decided["why"] == "finish shot"
     shot = (_snapshot or _mod("bambu_camera.py")["snapshot"])()
     picture = shot["file"]
+    state["pictures"] = int(state.get("pictures") or 0) + 1
+    state["last_picture_at"] = now
+    if finish:
+        state["finish_done"] = True
+        log("finish shot — layer %s of %s: %s" % (layer, status.get("total_layers"), picture))
+        return {"state": printer_state, "checked": True, "finish_shot": picture,
+                "phase": "printing", "next_in_s": 60.0}
+
     if _judge:
         verdict = _judge(picture, status, state.get("previous"), cfg["model"])
     elif cfg["judge"] == "claude":
         verdict = judge(picture, status, state.get("previous"), cfg["model"])
     else:
-        verdict = judge_obico(picture, state, cfg)
+        verdict = judge_obico(picture, state, dict(cfg, alert_score=plan["alert_score"],
+                                                   spike_score=plan["spike_score"]))
+    state["last_score"] = verdict.get("score")
+    state["previous"] = picture
     if verdict["verdict"] == "unsure" and not state.get("rechecked"):
         state["rechecked"] = True               # look again in a minute
         log("unsure (%s) — looking again in a minute" % verdict["problem"])
         return {"state": printer_state, "checked": True, "verdict": verdict,
-                "next_in_s": 60.0}
+                "phase": "printing", "next_in_s": 60.0}
     state.pop("rechecked", None)
-    acted = None
-    # The detector's own thresholds already decided (decided=True); a model's
-    # answer is acted on from act_on confidence up.
-    if verdict["verdict"] in ("problem", "unsure") and (
-            verdict.get("decided") or verdict["confidence"] >= float(cfg["act_on"])):
-        acted = (_act or act)(verdict, status, picture, cfg)
-        # one alert per problem: wait longer before the next look
-        wait = max(60 * float(cfg["interval_min"]), 900.0)
-    else:
-        log("ok — layer %s/%s, %s%%%s" % (layer, status.get("total_layers"),
-                                           status.get("progress_pct"),
-                                           (" (%s)" % verdict["problem"]) if verdict["problem"] else ""))
-        wait = 60 * float(cfg["interval_min"])
-    state["previous"] = picture
-    return {"state": printer_state, "checked": True, "verdict": verdict,
-            "acted": acted, "next_in_s": wait}
+
+    flagged = verdict["verdict"] in ("problem", "unsure") and (
+        verdict.get("decided") or verdict["confidence"] >= float(cfg["act_on"]))
+    if not flagged:
+        log("ok — layer %s/%s, %s%% (%s)" % (layer, status.get("total_layers"),
+                                             status.get("progress_pct"), decided["why"]))
+        return {"state": printer_state, "checked": True, "verdict": verdict,
+                "phase": "printing", "next_in_s": max(30.0, 60.0 * float(plan["cadence_min"]))}
+
+    if not plan.get("alert", True) or state.get("muted"):
+        log("flagged (%s) — logged only, this print isn't alerting" % verdict["problem"])
+        return {"state": printer_state, "checked": True, "verdict": verdict,
+                "phase": "printing", "next_in_s": 60.0 * float(plan["cadence_min"])}
+
+    fps = false_positives(state)
+    if fps >= int(plan["max_false_positives"]):
+        if plan["on_false_positive_limit"] == "stop":
+            stopped = studio_stop("%d false positives on this print" % fps, cfg)
+            report(state, {"kind": "stopped", "what": "false positives", "result": stopped})
+            return {"state": printer_state, "checked": True, "verdict": verdict,
+                    "acted": {"stopped": stopped}, "phase": "printing", "next_in_s": 600.0}
+        if not state.get("muted"):
+            state["muted"] = True
+            log("%d false positives on this print — logged only from here on" % fps)
+        return {"state": printer_state, "checked": True, "verdict": verdict,
+                "phase": "printing", "next_in_s": 60.0 * float(plan["cadence_min"])}
+    report(state, {"kind": "detector", "what": verdict.get("problem") or "possible failure",
+                   "score": verdict.get("score"), "confidence": verdict.get("confidence"),
+                   "picture": picture, "layer": layer,
+                   "progress_pct": status.get("progress_pct")})
+    acted = (_act or act)(verdict, status, picture, cfg, plan)
+    if plan["escalate"] != "off" and not plan["act_first"]:
+        acted = dict(acted or {}, review=ask_for_review(verdict, status, picture, state, plan))
+    state["flags"] = int(state.get("flags") or 0) + 1
+    return {"state": printer_state, "checked": True, "verdict": verdict, "acted": acted,
+            "phase": "printing", "next_in_s": max(60.0 * float(plan["cadence_min"]), 900.0)}
 
 
 def _lock_pid():

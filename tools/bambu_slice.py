@@ -31,6 +31,7 @@ import glob
 import json
 import os
 import re
+import runpy
 import shutil
 import subprocess
 import tempfile
@@ -754,4 +755,15 @@ def format_slice_report(report):
     for w in report.get("slicer_warnings", []):
         lines.append("")
         lines.append("  ! " + w)
+    if report.get("plates"):
+        try:
+            pr = runpy.run_path(os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "pricing.py"))
+            priced = pr["price_plates"](report["plates"])
+            report["price"] = priced
+            lines.append("")
+            lines.append(pr["format_price"](priced))
+        except Exception as exc:
+            lines.append("")
+            lines.append("  ! Couldn't work out the price: %s" % exc)
     return "\n".join(lines)

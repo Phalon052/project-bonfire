@@ -134,7 +134,7 @@ Desktop/Project Bonfire/catalog/model library/
 | File | Name | Where | When |
 |---|---|---|---|
 | Blender file | `<project name>.blend` (no file type), e.g. `alex_letter_board_letters_arial.blend`. One per project; always edit this same file. | `blend/` | Save automatically when a task is finished. |
-| STL (one per unique part) | `<object name>_<n>.stl`: first export `_1`, then `_2`, `_3`, … Identical copies share one STL (see section 3). | `stl/` | **Only after the models are confirmed complete.** Every re-export gets the next number; never overwrite an earlier STL. |
+| STL (one per unique part) | `<object name>_<n>.stl`: first export `_1`, then `_2`, `_3`, … Identical copies share one STL (see section 3). | `stl/` | **Only after the models are confirmed complete, and only through `export_gate.py` → `export_part()`** (it names the file too). Every re-export gets the next number; never overwrite an earlier STL. |
 | 3MF | Same naming as the STL | `3mf/` | Only when requested to get it ready to print (see `04_bambu_basics.md`). |
 | Claude's outputs | `<project name>_<description>_<n>.<ext>`, e.g. `pla_tolerance_test_preview_1.png` | `references/` | Whenever a preview, render, screenshot or report is made for the project. Never overwritten. |
 | Specifications | `specifications.md`, copied from `model library/_TEMPLATE_part.md` | `references/` | When the project has specs worth recording (dimensions, fits, quantities). |
@@ -174,7 +174,7 @@ longer has the original conversation. What goes in it has to be trustworthy.
   - Example: 3 identical pegs → object `prod_peg`, file `peg_1.stl`, Quantity `3`. Not `prod_peg_a`/`_b`/`_c`, and not "1 each".
   - Don't letter or number copies. Make separate objects only when the parts differ in some way (size, fit, label, hole, …); name those by what differs, e.g. `prod_block_press`, `prod_block_snug`.
   - Copies for printing are added at the 3MF stage (see `04_bambu_basics.md` → section 4).
-- Each part must be a single closed (manifold) solid with no stray internal faces, loose pieces, or holes in the surface. Check before export.
+- Each part must be a single closed (manifold) solid with no stray internal faces, loose pieces, or holes in the surface. **Enforced:** every STL is exported with `tools/export_gate.py` → `export_part(object, project)`, which runs 3D Print Toolbox's checks and writes no file if the part has non-manifold edges, flipped normals, self-intersections, zero-size faces/edges or more than one piece. Thin walls (< 0.8 mm, and < 1.2 mm recommended — `04_bambu_basics.md` §6), overhangs (> 45°) and sharp edges are reported as warnings. Never export with `bpy.ops.wm.stl_export` directly.
 - **Before export, orient each part for printing** following `04_bambu_basics.md` → *Print orientation*.
 - If a part is too big for the printer or needs splitting, follow `04_bambu_basics.md` → *Splitting parts and assembly*.
 
@@ -257,3 +257,7 @@ One row per row of *Expanded criteria*, in the same order:
 Manifold edges, loose geometry, bounding-box size and volume prove the mesh is *printable*. They
 prove nothing about whether it is the *right part*. Run both checks; never report the first in place
 of the second.
+
+The printable check is `export_gate.py` (run automatically by `export_part()`; `check_part()` runs it
+without exporting). Put its result in the report: *passed*, or the blocking failures and how many,
+plus any warnings.

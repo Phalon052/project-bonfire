@@ -67,7 +67,8 @@ TOOLS = os.path.join(ROOT, "tools")
 _MODULES = {"bb": "bambu.py", "b3": "bambu_3mf.py", "bpre": "bambu_presets.py",
             "bsl": "bambu_slice.py", "bcl": "bambu_cloud.py",
             "blan": "bambu_lan.py", "bpr": "bambu_print.py", "bp": "paths.py",
-            "bcam": "bambu_camera.py", "bw": "bambu_watch.py"}
+            "bcam": "bambu_camera.py", "bw": "bambu_watch.py",
+            "ph": "photo.py", "bmo": "bambu_modes.py", "bui": "bambu_studio_ui.py"}
 _LOADED_AT = [0.0]
 
 
@@ -88,7 +89,7 @@ def _fresh():
     return True
 
 
-bb = b3 = bpre = bsl = bcl = blan = bpr = bp = bcam = bw = None
+bb = b3 = bpre = bsl = bcl = blan = bpr = bp = bcam = bw = ph = bmo = bui = None
 _fresh()
 
 CONFIG_PATH = os.path.join(TOOLS, "bambu_config.json")
@@ -727,7 +728,8 @@ def _guard(fn, *a, **kw):
     try:
         return fn(*a, **kw)
     except (bpr["PrintError"], bcl["CloudError"], blan["LanError"],
-            bcam["CameraError"]) as exc:
+            bcam["CameraError"], ph["PhotoError"], bmo["ModeError"],
+            bui["UiError"]) as exc:
         return {"ok": False, "error": str(exc)}
 
 
@@ -738,6 +740,77 @@ def _with_picture(report, path):
         with open(path, "rb") as fh:
             out.append(McpImage(data=fh.read(), format="jpeg"))
     return out
+
+
+@mcp.tool()
+def photo_marker_sheet(page: str = "letter"):
+    """
+    Make the ArUco marker sheet for measuring from photos (tools/photo_markers.pdf):
+    four markers (IDs 0-3, size from tools/photo_markers.json), cut lines,
+    centre lines for setting each on a mat grid crossing, and a 100 mm bar to
+    check it printed at 100 %. page: "letter" or "a4".
+    """
+    return _ok(_guard(ph["marker_sheet"], os.path.join(TOOLS, "photo_markers.pdf"),
+                      page="a4" if page.lower() == "a4" else "letter"))
+
+
+@mcp.tool()
+def photo_layout(width_mm: float = 0, height_mm: float = 0, plane_mm: float = -1,
+                 marker_mm: float = 0):
+    """
+    Show, or record, where the photo markers sit on the mat
+    (tools/photo_markers.json). width_mm: centre of ID 0 to centre of ID 1;
+    height_mm: centre of ID 0 to centre of ID 3; plane_mm: the markers' surface
+    above the mat (the shim height, 0 on paper); marker_mm: the black square's
+    side as printed. Leave a value at 0 (plane at -1) to keep it.
+    """
+    lay = ph["load_layout"]()
+    for key, v in (("width_mm", width_mm), ("height_mm", height_mm),
+                   ("marker_mm", marker_mm)):
+        if v > 0:
+            lay[key] = float(v)
+    if plane_mm >= 0:
+        lay["plane_mm"] = float(plane_mm)
+    if width_mm > 0 or height_mm > 0 or plane_mm >= 0 or marker_mm > 0:
+        ph["save_layout"](lay)
+    return _ok({"ok": True, "layout": {k: lay[k] for k in ph["DEFAULT_LAYOUT"]},
+                "centres_mm": {str(k): v for k, v in ph["marker_centres"](lay).items()}})
+
+
+@mcp.tool()
+def photo_rectify(photo: str, part_height_mm: float = -1, px_per_mm: float = 10):
+    """
+    Rectify a photo of a part lying among the four ArUco markers to a true
+    straight-down view, scaled from the markers. Writes <photo>_rectified.png,
+    _rectified_grid.png (mm grid, 0 at ID 0's centre) and _rectified.json
+    beside the photo, and returns the report plus the grid picture so you can
+    read it. Check fit_rms_mm and warnings before trusting a number.
+    part_height_mm: the part's top-face height, to warn when it isn't on the
+    marker plane. Measure points with photo_measure.
+    """
+    r = _guard(ph["rectify"], photo, ppmm=px_per_mm,
+               part_height_mm=part_height_mm if part_height_mm >= 0 else None)
+    out = [_ok(r)]
+    if McpImage is not None and r.get("grid"):
+        data = ph["preview"](r["grid"])
+        if data:
+            out.append(McpImage(data=data, format="jpeg"))
+    return out
+
+
+@mcp.tool()
+def photo_measure(report: str, points: str, space: str = "rectified"):
+    """
+    Millimetres from a rectified photo. report: the _rectified.json path.
+    points: "x1,y1; x2,y2; ..." in pixels of the rectified picture
+    (space="rectified", full size, not the preview) or of the original photo
+    (space="photo"). Returns each point in mm and the distance along them.
+    """
+    try:
+        pts = [tuple(float(v) for v in p.split(",")) for p in points.split(";") if p.strip()]
+    except ValueError:
+        return _fail('points look like "x1,y1; x2,y2".')
+    return _ok(_guard(ph["measure"], report, pts, "photo" if space == "photo" else "rectified"))
 
 
 @mcp.tool()
@@ -783,6 +856,81 @@ def camera_check():
     if not shot.get("ok"):
         brief["camera_error"] = shot.get("error")
     return _with_picture(brief, shot.get("file"))
+
+
+@mcp.tool()
+def monitor_mode(project: str = "", mode: str = "", every_min: float = 0,
+                 why: str = "", windows: str = "") -> str:
+    """
+    How closely the print watch should follow a project's print. With no
+    project: the modes and what each is for. With one: save the mode beside
+    the project's newest 3MF (<name>.monitor.json), and the watch picks it up
+    by itself when that job starts.
+    modes: default (every 8 min) | early (30s bursts at the start, for batches
+      of small or thin parts and wide flat ones) | complex (bursts, plus your
+      layer windows over the fiddly parts) | tall (tightens with height) |
+      overnight (fewer pictures, lower bar, acts first) | quick (test prints) |
+      watch_only (records, never alerts).
+    every_min: override the mode's cadence. windows: JSON like
+      [{"from_layer": 40, "to_layer": 75, "every_min": 2, "why": "lattice"}]
+      (from_pct/to_pct work too).
+    """
+    if not project or not mode:
+        return _ok({"ok": True, "modes": {k: dict(v) for k, v in bmo["MODES"].items()},
+                    "settings": sorted(bmo["BASE"])})
+    over = {}
+    if every_min:
+        over["cadence_min"] = float(every_min)
+    if why:
+        over["why"] = why
+    if windows:
+        try:
+            over["windows"] = json.loads(windows)
+        except ValueError:
+            return _fail('windows should be JSON, e.g. [{"from_layer": 40, "every_min": 2}]')
+    three = _guard(bmo["_project_3mf"], project)
+    if isinstance(three, dict):
+        return _ok(three)
+    return _ok(_guard(bmo["write_config"], three, mode, **over))
+
+
+@mcp.tool()
+def print_review(action: str = "list", note: str = "") -> str:
+    """
+    Detections the watch wants a second opinion on. action=list returns the
+    oldest one waiting, with its picture, so you can look: is it a real
+    failure? Then answer action=real (stops the print through Bambu Studio) or
+    action=false (flags it a false positive in the project's error report; after
+    3 of those the watch stops alerting on that print).
+    """
+    if action == "list":
+        asks = bw["pending_reviews"]()
+        if not asks:
+            return _ok({"ok": True, "waiting": 0})
+        ask = asks[0]
+        return _with_picture({"ok": True, "waiting": len(asks), "review": ask},
+                             ask.get("picture"))
+    if action in ("real", "false"):
+        return _ok(_guard(bw["answer_review"], action == "real", note))
+    return _fail("action: list | real | false")
+
+
+@mcp.tool()
+def studio_stop(confirm: bool = False, test: bool = False) -> str:
+    """
+    Stop the running print by pressing Bambu Studio's own Stop button on this
+    PC (the firmware refuses stop_print from here). Studio must be open on the
+    Device tab, and the button has to have been pointed at once with
+    `python tools/bambu_studio_ui.py calibrate stop`.
+    test=true finds the window and buttons and clicks nothing. Stopping needs a
+    yes: pass confirm=true only after the person said to stop this print.
+    """
+    if test:
+        return _ok(_guard(bui["test"]))
+    if not confirm:
+        return _fail("Stopping a print can't be undone — ask first, then call with "
+                     "confirm=true.")
+    return _ok(_guard(bui["stop"]))
 
 
 @mcp.tool()

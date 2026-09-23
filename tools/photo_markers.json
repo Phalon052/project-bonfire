@@ -1,0 +1,27 @@
+{
+  "dictionary": "DICT_4X4_50",
+  "marker_mm": 50.0,
+  "width_mm": 400.0,
+  "height_mm": 300.0,
+  "plane_mm": 0.0,
+  "margin_mm": 40.0,
+  "markers": {
+    "0": [
+      0,
+      0
+    ],
+    "1": [
+      "W",
+      0
+    ],
+    "2": [
+      "W",
+      "H"
+    ],
+    "3": [
+      0,
+      "H"
+    ]
+  },
+  "camera": null
+}

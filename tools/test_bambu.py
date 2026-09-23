@@ -34,6 +34,15 @@ def check(name, got, want):
         FAILURES.append("%s: wanted %r, got %r" % (name, want, got))
 
 
+def _raises(exc_type, fn, *a, **kw):
+    """Run fn expecting it to refuse; returns the message (or "no error")."""
+    try:
+        fn(*a, **kw)
+    except exc_type as exc:
+        return str(exc)
+    return "no error"
+
+
 def note(name, value):
     print("       %-46s %s" % (name, value))
 
@@ -937,47 +946,59 @@ def main():
     gw = bw["check_once"].__globals__            # keep test lines out of the real log
     gw["SNAP_DIR"] = os.path.join(tmp, "watch")
     gw["LOG_PATH"] = os.path.join(tmp, "watch", "watch.log")
+    gw["REVIEW_DIR"] = os.path.join(tmp, "watch", "review")
     cfg_w = dict(bw["DEFAULTS"])
+    clock = [1000.0]
+    tick = lambda s=0: (clock.__setitem__(0, clock[0] + s), clock[0])[1]
     printing = lambda layer=10: (lambda: {"state": "printing", "job": "nut", "layer": layer,
                                           "total_layers": 50, "progress_pct": 20})
     shot_fn = lambda: {"file": pic}
     acted = []
-    act_fn = lambda verdict, status, picture, cfg: acted.append(verdict) or {"paused": False}
-    r = bw["check_once"]({}, cfg_w, _status=lambda: {"state": "idle"})
+    act_fn = lambda verdict, status, picture, cfg, plan=None: acted.append(verdict) or {"paused": False}
+    once = lambda st, status, **kw: bw["check_once"](st, kw.pop("cfg", cfg_w), _status=status,
+                                                     _snapshot=shot_fn, _now=lambda: clock[0], **kw)
+    r = once({}, lambda: {"state": "idle"})
     check("idle: no picture, sleeps idle_poll_min", (r["checked"], r["next_in_s"]), (False, 180.0))
     for stg, what in ((2, "heatbed preheating"), (14, "cleaning nozzle tip"),
                       (1, "auto bed leveling")):
-        r = bw["check_once"]({}, cfg_w, _status=lambda s=stg: dict(printing()(), stage_id=s),
-                             _snapshot=shot_fn)
-        check("%s: no picture yet, looks again in a minute" % what,
-              (r["checked"], r["next_in_s"]), (False, 60.0))
-    r = bw["check_once"]({}, cfg_w, _status=lambda: dict(printing(1)(), stage_id=0),
-                         _snapshot=shot_fn,
-                         _judge=lambda *a: {"verdict": "ok", "problem": "", "confidence": 0.0})
-    check("set-up done, layer 1: first picture straight away", r["checked"], True)
+        r = once({}, lambda s=stg: dict(printing()(), stage_id=s))
+        check("%s: set-up, status checks every 10s and no pictures" % what,
+              (r["checked"], r["phase"], r["next_in_s"]), (False, "prep", 10.0))
+    st = {}
+    r = once(st, lambda: dict(printing(1)(), stage_id=0))
+    check("just started: no picture for the first 80s",
+          (r["checked"], r["phase"], r["next_in_s"] <= 30), (False, "starting", True))
+    tick(80)
+    r = once(st, lambda: dict(printing(1)(), stage_id=0),
+             _judge=lambda *a: {"verdict": "ok", "problem": "", "confidence": 0.0})
+    check("80s later: the first picture", (r["checked"], r["why"] if "why" in r else ""), (True, ""))
     check("stage names read from the report",
           bc["parse_status"]({"gcode_state": "RUNNING", "stg_cur": 14})["stage"], "cleaning nozzle tip")
     check("no stage between jobs", bc["parse_status"]({"gcode_state": "IDLE", "stg_cur": 255})["stage_id"], None)
     st = {}
-    r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn,
-                         _judge=lambda *a: {"verdict": "ok", "problem": "", "confidence": 0.1},
-                         _act=act_fn)
-    check("ok: next picture in interval_min", (r["next_in_s"], acted), (300.0, []))
+    ok_judge = lambda *a: {"verdict": "ok", "problem": "", "confidence": 0.1}
+    r = once(st, printing(), _judge=ok_judge, _act=act_fn)
+    check("watch started mid-print: picture straight away, then the mode's cadence",
+          (r["checked"], r["next_in_s"], acted), (True, 480.0, []))
     check("the picture is kept for the next comparison", st.get("previous"), pic)
-    r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn,
-                         _judge=lambda *a: {"verdict": "problem", "problem": "spaghetti",
-                                            "confidence": 0.8}, _act=act_fn)
+    r = once(st, printing(), _judge=ok_judge, _act=act_fn)
+    check("not due yet: status only, no picture", r["checked"], False)
+    tick(480)
+    r = once(st, printing(), _judge=lambda *a: {"verdict": "problem", "problem": "spaghetti",
+                                                "confidence": 0.8}, _act=act_fn)
     check("problem: acted on (pause tried, pop-up)", [a["problem"] for a in acted], ["spaghetti"])
     acted.clear()
+    tick(900)
     unsure = lambda *a: {"verdict": "unsure", "problem": "blurry blob?", "confidence": 0.6}
-    r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn, _judge=unsure, _act=act_fn)
+    r = once(st, printing(), _judge=unsure, _act=act_fn)
     check("unsure: looks again in a minute before acting", (r["next_in_s"], acted), (60.0, []))
-    r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn, _judge=unsure, _act=act_fn)
+    tick(60)
+    r = once(st, printing(), _judge=unsure, _act=act_fn)
     check("still unsure the second time: acted on", len(acted), 1)
     acted.clear()
-    r = bw["check_once"](st, cfg_w, _status=printing(), _snapshot=shot_fn,
-                         _judge=lambda *a: {"verdict": "problem", "problem": "maybe",
-                                            "confidence": 0.3}, _act=act_fn)
+    tick(900)
+    r = once(st, printing(), _judge=lambda *a: {"verdict": "problem", "problem": "maybe",
+                                                "confidence": 0.3}, _act=act_fn)
     check("low-confidence problem: logged, not acted on", acted, [])
 
     jo = bw["judge_obico"]
@@ -1110,6 +1131,231 @@ def main():
     check("2.8.2.61 can", _bs["studio_can_print"]("02.08.02.61"), True)
     check("unknown version isn't guessed", _bs["studio_can_print"](""), None)
     check("warning names the version", "01.09.07.52" in _bs["STUDIO_TOO_OLD"] % "01.09.07.52", True)
+
+
+    print("\n== measuring from photos: ArUco markers ==")
+    try:
+        import cv2 as _cv2
+        import numpy as _np2
+        _ok_cv = hasattr(_cv2, "aruco")
+    except ImportError:
+        _ok_cv = False
+    if not _ok_cv:
+        note("skipped", "OpenCV isn't installed (python -m pip install opencv-python numpy)")
+    else:
+        ph = runpy.run_path(os.path.join(HERE, "photo.py"))
+        lay = dict(ph["DEFAULT_LAYOUT"])
+        pdir = os.path.join(tmp, "photo")
+        os.makedirs(pdir)
+        sheet = ph["marker_sheet"](os.path.join(pdir, "m.pdf"), lay)
+        check("marker sheet is a PDF", open(sheet["file"], "rb").read(5), b"%PDF-")
+        R, ox, oy = 4.0, -80.0, -80.0
+        W, Hh = int(560 * R), int(460 * R)
+        mat = _np2.full((Hh, W, 3), (70, 120, 60), _np2.uint8)
+        dic = _cv2.aruco.getPredefinedDictionary(_cv2.aruco.DICT_4X4_50)
+
+        def mpx(x, y):
+            return (int(round((x - ox) * R)), int(round((y - oy) * R)))
+
+        def lay_tile(i, drop=False):
+            cx, cy = ph["marker_centres"](lay)[i]
+            t = int(70 * R)
+            m = _cv2.aruco.generateImageMarker(dic, i, int(50 * R))
+            tile = _np2.full((t, t), 255, _np2.uint8)
+            q = (t - m.shape[0]) // 2
+            if not drop:
+                tile[q:q + m.shape[0], q:q + m.shape[0]] = m
+            if i == 2:
+                tile = _np2.rot90(tile)            # laid a quarter turn round
+            x0, y0 = mpx(cx - 35, cy - 35)
+            mat[y0:y0 + t, x0:x0 + t] = tile[..., None]
+
+        for i in range(4):
+            lay_tile(i)
+        _cv2.rectangle(mat, mpx(140, 130), mpx(260, 170), (200, 200, 200), -1)
+        src = _np2.float32([[0, 0], [W, 0], [W, Hh], [0, Hh]])
+        dst = _np2.float32([[210, 150], [1825, 90], [1950, 1425], [75, 1350]])
+        M = _cv2.getPerspectiveTransform(src, dst)
+
+        def shoot(name):
+            img = _cv2.warpPerspective(mat, M, (2000, 1500), flags=_cv2.INTER_AREA,
+                                       borderValue=(30, 30, 30))
+            path = os.path.join(pdir, name)
+            _cv2.imwrite(path, _cv2.GaussianBlur(img, (3, 3), 0.8))
+            return path
+
+        shot = shoot("mat.jpg")
+        truth = _cv2.perspectiveTransform(_np2.float32(
+            [mpx(140, 130), mpx(260, 130), mpx(260, 170)]).reshape(-1, 1, 2), M).reshape(-1, 2)
+        rep = ph["rectify"](shot, lay=lay, ppmm=5)
+        check("all four markers found", rep["markers_found"], [0, 1, 2, 3])
+        check("a tile laid sideways is still placed right", rep["quarter_turns"][2] != 0, True)
+        check("markers fit the layout", rep["fit_rms_mm"] < 0.3, True)
+        check("no warnings on a clean shot", rep["warnings"], [])
+        got = ph["measure"](rep, truth.tolist())
+        check("120 x 40 mm part measures within 0.3 mm",
+              [abs(got["legs_mm"][0] - 120) < 0.3, abs(got["legs_mm"][1] - 40) < 0.3], [True, True])
+        again = ph["measure"](os.path.join(pdir, "mat_rectified.json"),
+                              [(5 * (140 - rep["origin_mm"][0]), 5 * (130 - rep["origin_mm"][1]))],
+                              "rectified")
+        check("rectified pixels read back as mm", again["points_mm"], [(140.0, 130.0)])
+        check("rectified and grid pictures written",
+              [os.path.isfile(rep["rectified"]), os.path.isfile(rep["grid"])], [True, True])
+        big = dict(lay, marker_mm=52.0)                # as if the sheet printed at 96 %
+        check("a sheet printed at the wrong scale is flagged",
+              any("100%" in w for w in ph["rectify"](shot, lay=big, ppmm=2)["warnings"]), True)
+        check("a part off the marker plane is flagged",
+              any("shim" in w for w in ph["rectify"](shot, lay=lay, ppmm=2,
+                                                      part_height_mm=12)["warnings"]), True)
+        lay_tile(3, drop=True)
+        three = ph["rectify"](shoot("three.jpg"), lay=lay, ppmm=2)
+        check("three markers still rectify, with a warning",
+              (three["markers_found"], bool(three["warnings"])), ([0, 1, 2], True))
+        lay_tile(1, drop=True)
+        try:
+            ph["rectify"](shoot("two.jpg"), lay=lay, ppmm=2)
+            check("two markers are refused", "no error", "PhotoError")
+        except ph["PhotoError"] as exc:
+            check("two markers are refused in words", "Found 2 of the 4" in str(exc), True)
+
+
+    print("\n== monitoring modes ==")
+    bmo = runpy.run_path(os.path.join(HERE, "bambu_modes.py"))
+    plan = bmo["resolve"]({"mode": "early"}, {"alert_score": 0.45, "spike_score": 0.78})
+    check("a mode's settings come through", (plan["burst"]["every_s"], plan["cadence_min"]), (30, 8))
+    check("thresholds fall back to the watch's", plan["alert_score"], 0.45)
+    check("an unknown mode is refused",
+          isinstance(_raises(bmo["ModeError"], bmo["resolve"], {"mode": "nope"}), str), True)
+    over = bmo["resolve"]({"mode": "default", "cadence_min": 3, "why": "thin walls"})
+    check("the sidecar overrides the mode", (over["cadence_min"], over["why"]), (3, "thin walls"))
+    st_m = {"phase": "prep", "job_seen_at": 100.0}
+    now = 150.0
+    d = bmo["plan_next"](plan, st_m, {}, now)
+    check("set-up: no picture in the first two minutes",
+          (d["action"], d["next_in_s"]), ("wait", 10.0))
+    d = bmo["plan_next"](plan, st_m, {}, 100.0 + 130)
+    check("after that, status checks only", d["action"], "free_check")
+    st_m = {"phase": "starting", "printing_since": 200.0}
+    check("printing: the first picture is 80s in",
+          [bmo["plan_next"](plan, st_m, {}, 200.0 + t)["action"] for t in (10, 85)],
+          ["wait", "picture"])
+    st_m = {"phase": "printing", "pictures": 3, "last_picture_at": 1000.0}
+    d = bmo["plan_next"](plan, st_m, {"layer": 5, "total_layers": 300}, 1000.0 + 31)
+    check("early mode: every 30s for the first cycles", d["action"], "picture")
+    st_m["pictures"] = 20
+    d = bmo["plan_next"](plan, st_m, {"layer": 5, "total_layers": 300}, 1000.0 + 31)
+    check("...then it backs off to the cadence", (d["action"], round(d["next_in_s"])),
+          ("free_check", 30))
+    tall = bmo["resolve"]({"mode": "tall"}, {"alert_score": 0.45})
+    st_m = {"phase": "printing", "pictures": 9, "last_picture_at": 0.0}
+    d = bmo["plan_next"](tall, st_m, {"layer": 80, "total_layers": 100, "progress_pct": 80}, 121.0)
+    check("tall: high up, a window tightens the cadence", "knock over" in d["why"], True)
+    fast = bmo["resolve"]({"mode": "default", "windows": [
+        {"from_layer": 40, "to_layer": 60, "every_min": 2, "why": "the lattice"}]})
+    st_m = {"phase": "printing", "pictures": 9, "last_picture_at": 0.0}
+    check("a layer window only applies inside it",
+          [bmo["plan_next"](fast, dict(st_m), {"layer": ly, "total_layers": 100}, 150.0)["action"]
+           for ly in (30, 50)], ["free_check", "picture"])
+    adapt = bmo["resolve"]({"mode": "default"}, {"alert_score": 0.4})
+    st_m = {"phase": "printing", "pictures": 9, "last_picture_at": 0.0, "last_score": 0.1}
+    d = bmo["plan_next"](adapt, st_m, {"layer": 9, "total_layers": 100}, 300.0, score=0.25)
+    check("a climbing score tightens the cadence by itself", "tightened" in d["why"], True)
+    st_m = {"phase": "printing", "pictures": 9, "last_picture_at": 9e9}
+    d = bmo["plan_next"](adapt, st_m, {"layer": 99, "total_layers": 100}, 9e9)
+    check("finish shot two layers from the end", d["why"], "finish shot")
+    st_m["finish_done"] = True
+    check("...only once", bmo["plan_next"](adapt, st_m, {"layer": 99, "total_layers": 100},
+                                           9e9)["why"] != "finish shot", True)
+
+    print("\n== what the printer says without a picture ==")
+    free = bmo["free_check"]
+    stt = {"state": "printing", "stage_id": 0, "layer": 12, "total_layers": 60,
+           "errors": [{"code": "0300_8003", "help": "u"}]}
+    check("an HMS code is serious", [(f["what"][:13], f["serious"]) for f in free(plan, stt, {})],
+          [("printer error", True)])
+    mem = {}
+    free(plan, {"state": "printing", "stage_id": 0, "layer": 12}, mem, now=0.0)
+    got = free(plan, {"state": "printing", "stage_id": 0, "layer": 12}, mem, now=60 * 16)
+    check("no new layer for 15 minutes is a stall (a clog the camera can't see)",
+          [f["serious"] for f in got], [True])
+    mem2 = {}
+    free(plan, {"state": "printing", "stage_id": 0, "layer": 12}, mem2, now=0.0)
+    check("a layer moving on is not",
+          free(plan, {"state": "printing", "stage_id": 0, "layer": 13}, mem2, now=60 * 16), [])
+    cold = {"state": "printing", "stage_id": 0, "layer": 5, "nozzle_c": 140,
+            "nozzle_target_c": 220}
+    check("a cold nozzle is serious", [f["serious"] for f in free(plan, cold, {})], [True])
+    check("free checks can be switched off",
+          free(bmo["resolve"]({"mode": "default", "free_checks": False}), stt, {}), [])
+
+    print("\n== a project's monitoring sidecar and error report ==")
+    lib = os.path.join(tmp, "lib")
+    proj = os.path.join(lib, "stl_drawer_organizer")
+    os.makedirs(os.path.join(proj, "3mf"))
+    three = os.path.join(proj, "3mf", "drawer_organizer_3.3mf")
+    open(three, "w").close()
+    w = bmo["write_config"](three, "early", why="12 small clips")
+    check("the sidecar sits next to the 3MF", os.path.basename(w["file"]),
+          "drawer_organizer_3.monitor.json")
+    found = bmo["find_config"]("drawer_organizer_3.gcode.3mf", lib)
+    check("the printer's job name finds it", found["config"]["mode"], "early")
+    check("...even with a plate suffix",
+          bmo["find_config"]("drawer_organizer_3_plate_1", lib)["config"]["why"], "12 small clips")
+    check("an unrelated job has no config", bmo["find_config"]("something else", lib), None)
+    check("a bad mode is refused when saving",
+          isinstance(_raises(bmo["ModeError"], bmo["write_config"], three, "sloppy"), str), True)
+    rpath = bmo["report_path"](proj, "drawer_organizer_3.3mf")
+    check("the report goes in the project's Error Report folder",
+          os.path.basename(os.path.dirname(rpath)), "Error Report")
+    rpath, idx = bmo["write_report"](rpath, {"kind": "detector", "what": "spaghetti?"})
+    check("an entry is written, not flagged yet",
+          (idx, json.load(open(rpath))["entries"][0]["false_positive"]), (0, False))
+    check("a review can flag it a false positive",
+          bmo["mark_false_positive"](rpath, 0, "it was the purge line"), 1)
+
+    print("\n== stopping through Bambu Studio's own button ==")
+    sui = runpy.run_path(os.path.join(HERE, "bambu_studio_ui.py"))
+    try:
+        import numpy as _np3
+        import cv2 as _cv3
+    except ImportError:
+        note("skipped", "numpy/OpenCV aren't installed")
+    else:
+        rng = _np3.random.default_rng(3)
+        screen = rng.integers(0, 255, (500, 700, 3), dtype=_np3.uint8)
+        button = screen[300:340, 200:320].copy()
+        x, y, sc = sui["locate"]("stop", screen, (10, 20), _read=lambda p: button)
+        check("the button is found where it is", (x, y, sc > 0.99), (270, 340, True))
+        check("a blank saved button is refused (it would match anywhere)",
+              "nearly blank" in _raises(sui["UiError"], sui["locate"], "stop", screen, (0, 0),
+                                        _read=lambda p: _np3.zeros((20, 20, 3), _np3.uint8)), True)
+        twice = screen.copy()
+        twice[100:140, 500:620] = button
+        check("two things that look alike: nothing is clicked",
+              "more than one" in _raises(sui["UiError"], sui["locate"], "stop", twice, (0, 0),
+                                         _read=lambda p: button), True)
+        check("no saved button yet: says how to make one",
+              "calibrate" in _raises(sui["UiError"], sui["locate"], "stop", screen, (0, 0),
+                                     _read=lambda p: None), True)
+        check("the window search says what to do when Studio isn't open",
+              "Studio" in _raises(sui["UiError"], sui["find_window"]), True)
+
+    print("\nPlate price: ((g x 0.013) + (2 x h)) + 15%")
+    pr = runpy.run_path(os.path.join(HERE, "pricing.py"))
+    check("100 g, 1 h", pr["plate_price"](100, 1), 3.80)
+    check("120.5 g, 3.25 h", pr["plate_price"](120.5, 3.25), 9.28)
+    two = [{"plate": 1, "filament_g": 120.5, "print_seconds": 11700},
+           {"plate": 2, "filament_g": 30.0, "print_seconds": 2700}]
+    priced = pr["price_plates"](two)
+    check("each plate priced, file total is the sum",
+          ([p["price"] for p in priced["plates"]], priced["total"]), ([9.28, 2.17], 11.45))
+    check("the slice report shows the price",
+          "$11.45" in bs["format_slice_report"]({
+              "ok": True, "file": "lid_1.gcode.3mf",
+              "plates": [dict(p, print_time="", filaments=[], support_used=False,
+                              outside_plate=False, warnings=[]) for p in two]}),
+          True)
+
 
     print("\n" + ("-" * 60))
     if FAILURES:

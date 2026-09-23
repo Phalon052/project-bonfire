@@ -10,6 +10,7 @@ If a plugin doesn't work well out of the box, add a file `plugins/<plugin-name>.
 |---|---|---|---|
 | BoltFactory | Screws, bolts, nuts | Yes | `boltfactory.md` |
 | Extra Mesh Objects | Gears (spur, helical, bevel, crown, worm); pipe joints and other shapes | Yes (0.4.1) | `extra_mesh_objects.md` |
+| 3D Print Toolbox | Printability checks before every STL export (the export gate) | Yes (1.4.1) | `print3d_toolbox.md` |
 
 ## Fallback
 
