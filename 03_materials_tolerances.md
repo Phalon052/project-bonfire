@@ -82,7 +82,7 @@ Blank = never tested. Values come from §5; settle a blank material's values whe
   the major and the minor diameter of the internal thread grow by 2 × the value (M12 × 1.75 nut at 0.30 →
   major 12.60, minor 10.45). Tested with M12 × 1.75 (BoltFactory, `plugins/boltfactory.md`), bolt printed
   head-down, nut printed flat. Fine threads (pitch under ~1 mm) and small sizes (under ~M6) weren't tested — flag them.
-- **Gear backlash:** make **each** gear's teeth thinner at the pitch circle by **half** the backlash (0.10 for
+- **Gear backlash:** build gears with `tools/gear.py`, which applies all of this and reads the values from this table. Make **each** gear's teeth thinner at the pitch circle by **half** the backlash (0.10 for
   0.20), and put the gears at the **exact** centre distance (sum of the pitch radii) — never spread the centres
   apart to make play. Teeth must be **involute** (20° pressure angle); the Extra Mesh Objects add-on's teeth are
   not, and jam (`plugins/extra_mesh_objects.md`). A gear's centre hole on its axle or peg uses the **sliding /

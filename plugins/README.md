@@ -16,6 +16,8 @@ If a plugin doesn't work well out of the box, add a file `plugins/<plugin-name>.
 
 If no plugin fits, or a plugin's output isn't accurate enough for printing, generate the part directly with a Python script (e.g. involute gear teeth or thread profiles calculated from the specs). Say when this fallback is used.
 
+- **Gears that must mesh:** `tools/gear.py` (involute spur gears; backlash and centre-hole fit from `03`). Don't use Extra Mesh Objects for these.
+
 ## Template for a plugin file
 
 ```markdown
