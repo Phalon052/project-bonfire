@@ -57,7 +57,7 @@ Fill this in from a tolerance test print (Ø12.00 pegs in holes at each clearanc
 
 | Material | Exact | Press (per side) | Snug (per side) | Slide / rotating (per side) | Hole compensation used | Date / notes |
 |---|---|---|---|---|---|---|
-| **Overture PLA** | 0 — good | **0.05 — good** | **0.10 — good** | **0.20 — good** | none (X-Y hole compensation off) | (Completed) 2026-09-24 |
+| **Overture PLA** | 0 — good | **0.05 — good** | **0.10 — good** | **0.20 — good** | none (X-Y hole compensation off) | 2026-09-24 (Completed)|
 | Bambu PLA Basic | | | | | | |
 | PLA Matte | | | | | | |
 | PETG Basic | | | | | | |
