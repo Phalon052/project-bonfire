@@ -257,7 +257,7 @@ Fractions become decimals (`1/4` → `0.25`). The Lowe's code is left off when t
 | Line with end ticks + number | Length of the edge beside it |
 | Boxed number + arrow | Height of what it points to |
 | **Black** marker | Exact dimension |
-| **Green** marker | Sliding fit |
+| **Green** marker | Sliding / rotating fit |
 | **Red** marker | Press fit |
 | Arc in a corner + number° | That angle; otherwise all corners are 90° |
 
@@ -267,12 +267,14 @@ Anything missing or unclear gets asked about in one message before modelling.
 
 ## Default clearances (per side, mm)
 
-| Fit | PLA Basic / Overture | PLA Matte | PETG Basic |
-|---|---|---|---|
-| Press (red) | 0.05 | 0.10 | 0.10 |
-| Slide (green) | 0.20 | 0.20 | 0.25 |
+| Fit | Overture PLA | PLA Matte | Bambu PLA Basic | PETG Basic | Bambu ABS | Bambu ABS-CF |
+|---|---|---|---|---|---|---|
+| Exact (black) | 0 | — | — | — | — | — |
+| Press (red) | **0.05** ✓ | — | — | — | — | — |
+| Snug | **0.10** ✓ | — | — | — | — | — |
+| Sliding / rotating (green) | **0.20** ✓ | — | — | — | — | — |
 
-Starting values from online guides. Measured values in `03_materials_tolerances.md` §5 replace them once filled in.
+✓ = measured on this printer in Overture PLA (tolerance test, 2026-09-24). — = no values yet (Bambu PLA Basic, PLA Matte, PETG Basic, Bambu ABS, Bambu ABS-CF); they get set the first time a plan uses that material. There are only these four fits: ask for "rotating" and you get the slide clearance; "loose" is no longer used.
 
 ## Where files go
 

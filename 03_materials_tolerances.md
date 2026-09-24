@@ -14,30 +14,35 @@ Setup: **Bambu Lab P1S, 0.4 mm nozzle, AMS**. Default material: **Bambu PLA Basi
   Example: a 10 mm peg with a 0.20 mm/side sliding fit → hole is 10.40 mm.
 - **Default: apply the clearance to the hole or socket** and keep the peg at its nominal size, unless the drawing or request says otherwise.
 - "Exact" (black marker) means no clearance is added.
+- **Sliding and rotating are the same fit** (0.20 mm/side for Overture PLA): use the sliding clearance for anything that slides *or* turns.
 
 ## 2. Materials
 
 | Material | Treat as | Notes |
 |---|---|---|
-| **Bambu PLA Basic** | PLA | Default material. Most dimensionally stable of the list. Shrinkage about 0.3%. |
-| **Overture PLA** | **Same as Bambu PLA Basic** | Confirmed to print the same on this printer. |
-| **Bambu PLA Matte** | PLA, with caution for press fits | Weaker than PLA Basic between layers (Bambu data sheet: Z tensile 22 MPa vs 31 MPa; Z elongation about 4.8%). Press-fit bosses and thin walls are more likely to crack along layer lines. |
-| **Bambu PETG Basic** | PETG | Needs more clearance than PLA (about +0.05 mm/side). Shrinkage about 0.5%. Tougher and more flexible, so press fits are more forgiving. |
+| **Bambu PLA Basic** | PLA | Default material. Most dimensionally stable of the list. Shrinkage about 0.3%. **No clearances set (cleared 2026-09-24)** — when a plan uses it, settle its values then (test or decide) before modelling fits. |
+| **Overture PLA** | PLA | **Measured on this printer** (§5, 2026-09-24). |
+| **Bambu PLA Matte** | PLA | **No clearances set** (cleared 2026-09-24). |
+| **Bambu PETG Basic** | PETG | **No clearances set (cleared 2026-09-24).** Tougher and more flexible than PLA. |
+| **Bambu ABS** | ABS | **No clearances set** (added 2026-09-24). |
+| **Bambu ABS-CF** | ABS-CF | **No clearances set** (added 2026-09-24). |
 
 ## 3. Default clearances (per side, mm)
 
-| Fit | Drawing colour | PLA Basic / Overture | PLA Matte | PETG Basic |
-|---|---|---|---|---|
-| Exact | Black | 0 | 0 | 0 |
-| **Press fit** (firm push, friction holds) | Red | **0.05** | **0.10** ¹ | **0.10** |
-| Snug (tight, removable by hand) | — | 0.10 | 0.10 | 0.15 |
-| **Sliding fit** (moves freely, little play) | Green | **0.20** | **0.20** | **0.25** |
-| Loose / easy fit | — | 0.35 | 0.35 | 0.40 |
-| Rotating / print-in-place | — | 0.40 | 0.40 | 0.55 |
+| Fit | Drawing colour | Overture PLA (measured, §5) | Bambu PLA Basic | PLA Matte | PETG Basic | Bambu ABS | Bambu ABS-CF |
+|---|---|---|---|---|---|---|---|
+| Exact | Black | 0 | — | — | — | — | — |
+| **Press fit** (firm push, friction holds) | Red | **0.05** | — | — | — | — | — |
+| Snug (tight, removable by hand) | — | 0.10 | — | — | — | — | — |
+| **Sliding / rotating fit** (moves freely, little play; also for parts that turn — gears on pegs, hinges, axles) | Green | **0.20** | — | — | — | — | — |
 
-Ranges these came from: PLA press 0.00–0.15, slide 0.15–0.30, loose 0.30–0.40, rotating 0.30–0.60; PETG press 0.05–0.15, slide 0.20–0.30, loose 0.30–0.50, rotating 0.50–0.70. Defaults are picked from the middle of the overlapping ranges.
+— = not set. Bambu PLA Basic, PLA Matte and PETG Basic values were cleared on 2026-09-24; Bambu ABS and ABS-CF have none yet. Address each when a plan first uses it.
 
-¹ **Judgment call, not from a source:** PLA Matte uses a slightly looser press fit because of its weaker layer bonding. No source gives Matte-specific clearances; for sliding fits there's no evidence it differs from PLA Basic.
+✅ **Four fits only (2026-09-24):** exact, press, snug, sliding. *Loose* is dropped, and *rotating* uses
+the sliding value — on the Overture PLA tolerance test, the sliding hole moved the way wanted for both sliding and
+rotating parts. A request for a "rotating" or "loose" fit gets the sliding clearance.
+
+Ranges these came from: PLA press 0.00–0.15, slide 0.15–0.30, loose 0.30–0.40, rotating 0.30–0.60. Defaults are picked from the middle of the overlapping ranges.
 
 ## 4. When to ask anyway
 
@@ -46,19 +51,22 @@ Ranges these came from: PLA press 0.00–0.15, slide 0.15–0.30, loose 0.30–0
 - The part carries load, must seal, or is safety-related.
 - The fit is critical and no measured value exists yet: build it, but suggest a small test piece first.
 
-## 5. Measured results from this printer [Fill out]
+## 5. Measured results from this printer ✅ Overture PLA · [Fill out] PLA Basic, Matte, PETG, ABS, ABS-CF
 
-Fill this in from a tolerance test print (pegs and holes at clearances from 0.05 to 0.50 mm). These override section 3.
+Fill this in from a tolerance test print (Ø12.00 pegs in holes at each clearance). These override section 3.
 
-| Material | Press (per side) | Slide (per side) | Loose (per side) | Hole compensation used | Date / notes |
-|---|---|---|---|---|---|
-| PLA Basic / Overture | | | | | |
-| PLA Matte | | | | | |
-| PETG Basic | | | | | |
+| Material | Exact | Press (per side) | Snug (per side) | Slide / rotating (per side) | Hole compensation used | Date / notes |
+|---|---|---|---|---|---|---|
+| **Overture PLA** | 0 — good | **0.05 — good** | **0.10 — good** | **0.20 — good** | none (X-Y hole compensation off) | (Completed) 2026-09-24 |
+| Bambu PLA Basic | | | | | | |
+| PLA Matte | | | | | | |
+| PETG Basic | | | | | | |
+| Bambu ABS | | | | | | |
+| Bambu ABS-CF | | | | | | |
 
 ## 6. Adding a new material [Fill out as needed]
 
-For each new filament, record: brand and type, what it behaves like, press/slide/loose values, anything special (brittleness, flexibility, drying needs).
+For each new filament, record: brand and type, what it behaves like, press/snug/slide values, anything special (brittleness, flexibility, drying needs).
 
 ---
 
@@ -70,5 +78,3 @@ For each new filament, record: brand and type, what it behaves like, press/slide
 - GrandpaCAD — fit calculator (FDM ranges, on diameter): https://grandpacad.com/en/tools/tolerance-fit-calculator
 - Bambu Lab Wiki — X-Y hole/contour compensation: https://wiki.bambulab.com/en/software/bambu-studio/xy-hole-contour-compensation
 - Bambu Lab Wiki — print shrinkage (starting compensation values): https://wiki.bambulab.com/en/knowledge-sharing/3d-prints-shrinkage
-- Bambu PLA Matte technical data sheet: https://store.bblcdn.com/s7/default/5b061f2feeac4ba88f355a33248bbda7/Bambu_PLA_Matte_Technical_Data_Sheet.pdf
-- 3D Mag — Matte PLA (PLA Basic vs Matte strength): https://www.3dmag.com/3d-wikipedia/matte-pla-filament-print-settings-strength-finish/

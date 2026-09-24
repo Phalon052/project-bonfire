@@ -181,7 +181,7 @@ Before creating anything, check whether a title refers to something that already
 | Colour | Meaning |
 |---|---|
 | **Black** | Exact dimension. Model it as written. |
-| **Green** | **Sliding fit.** Apply the slide clearance for the material in `03_materials_tolerances.md`. |
+| **Green** | **Sliding / rotating fit.** Apply the slide clearance for the material in `03_materials_tolerances.md` — the same value is used for parts that turn. |
 | **Red** | **Press fit.** Apply the press-fit clearance for the material in `03_materials_tolerances.md`. |
 
 - A coloured dimension describes how that feature must fit its mating part. Say which side the clearance was applied to (hole made bigger, or peg made smaller).
