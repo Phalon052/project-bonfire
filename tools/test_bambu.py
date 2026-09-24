@@ -1340,22 +1340,6 @@ def main():
         check("the window search says what to do when Studio isn't open",
               "Studio" in _raises(sui["UiError"], sui["find_window"]), True)
 
-    print("\nPlate price: ((g x 0.013) + (2 x h)) + 15%")
-    pr = runpy.run_path(os.path.join(HERE, "pricing.py"))
-    check("100 g, 1 h", pr["plate_price"](100, 1), 3.80)
-    check("120.5 g, 3.25 h", pr["plate_price"](120.5, 3.25), 9.28)
-    two = [{"plate": 1, "filament_g": 120.5, "print_seconds": 11700},
-           {"plate": 2, "filament_g": 30.0, "print_seconds": 2700}]
-    priced = pr["price_plates"](two)
-    check("each plate priced, file total is the sum",
-          ([p["price"] for p in priced["plates"]], priced["total"]), ([9.28, 2.17], 11.45))
-    check("the slice report shows the price",
-          "$11.45" in bs["format_slice_report"]({
-              "ok": True, "file": "lid_1.gcode.3mf",
-              "plates": [dict(p, print_time="", filaments=[], support_used=False,
-                              outside_plate=False, warnings=[]) for p in two]}),
-          True)
-
 
     print("\n" + ("-" * 60))
     if FAILURES:

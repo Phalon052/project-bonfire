@@ -75,16 +75,6 @@ When requested to get something ready to print:
 - In the report, also list:
   - any approved settings that were changed, and why
   - the hardware committed, and anything short (the tool adds it to the shopping list)
-  - ✅ **the price of each plate, and the total for that .3mf** (2026-09-23), always, for the
-    file just built — never an earlier version or another project's file:
-
-    **Price = ((filament g × 0.013) + (2 × print hours)) + 15%**, rounded to the cent.
-
-    Grams and hours are the slicer's figures for that plate, so the file must be sliced first
-    (`prepare_and_slice` does both; for a 3MF that was only built, slice it before reporting).
-    The slice report prints the price by itself; on its own use `tools/pricing.py` →
-    `price_3mf("<file>.gcode.3mf")`, or `plate_price(grams, hours)`. Never estimate the price
-    from the model — if the slice has no weight or time, say so instead of guessing.
 - ✅ **Set the monitoring mode for the print** (2026-09-20) with `monitor_mode(project, mode)`,
   which saves `<name>.monitor.json` beside the 3MF. The watch reads it by itself when that job
   starts. Pick from what is on the plate, and say which and why in the report:
@@ -176,5 +166,5 @@ The Bambu MCP (`tools/bambu.py`, `tools/bambu_slice.py`, `tools/bambu_mcp.py`) a
 - **`tools/bambu_template.3mf`** is a project saved from Bambu Studio with the P1S presets selected. Every setting this project doesn't touch is copied from it, so the file matches Bambu's defaults exactly. Without it the presets are built from scratch — workable, but not identical, and the report says so.
 - **Plate layout** uses Bambu Studio's own Arrange when Studio is installed and no part has a raft, keeping each part's way up. With a raft, a custom spacing, or no Studio, the project's own packer lays the plate out instead: centred, with room for each part's brim and raft, and clear of the P1S's no-print corner (18 × 28 mm, front-left). Studio's command-line Arrange ignores a raft's spread, which makes rafted parts' first layers collide.
 - ✅ **PLA and the bed temperature (2026-09-19):** the bed temperatures are set deliberately and are not to be changed. Studio warns on every PLA slice that the bed is above PLA's softening point and suggests opening the door; that warning is not wanted and is hidden in slice reports. No door rule.
-- **Sliced files** go in the project's `3mf/` folder as `<name>_<n>.gcode.3mf`, never overwriting. The slice report gives print time, filament per slot in grams and metres, whether support was generated, whether any toolpath falls outside the printable area, and the price of each plate and of the whole file (section 4).
+- **Sliced files** go in the project's `3mf/` folder as `<name>_<n>.gcode.3mf`, never overwriting. The slice report gives print time, filament per slot in grams and metres, whether support was generated, and whether any toolpath falls outside the printable area.
 - **Preset names:** machine `Bambu Lab P1S 0.4 nozzle`, process `0.20mm Standard @BBL X1C` (the P1S shares the X1C process family — there are no `@BBL P1S` process presets). Filament preset names differ between Studio versions, so each material lists the names it might have and the one actually installed is used.

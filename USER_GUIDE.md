@@ -134,10 +134,6 @@ and `BAMBU_STUDIO_PATH` if Studio isn't in the usual place.
 - Ask in plain words, e.g. *"Get the shelf bracket ready to print."* Claude picks the
   orientation, supports and raft (within `04_bambu_basics.md`), lays out the plate, slices,
   and reports print time, filament per slot and anything Studio warned about.
-- **Price:** every ready-to-print report ends with the price of each plate and the total for
-  that .3mf: **((filament g × 0.013) + (2 × print hours)) + 15%**. To price a file by hand:
-  `python tools\pricing.py <grams> <hours>`, or `python tools\pricing.py <file>.gcode.3mf`.
-  The rates are at the top of `tools/pricing.py`.
 - **Starting:** the file opens in Bambu Studio and **you press Print**. The P1S firmware
   (2025 on) only accepts start, pause, resume and stop commands signed by Bambu's own apps,
   so the tools can't send them.
