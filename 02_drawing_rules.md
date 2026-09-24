@@ -184,8 +184,8 @@ Before creating anything, check whether a title refers to something that already
 | **Green** | **Sliding / rotating fit.** Apply the slide clearance for the material in `03_materials_tolerances.md` — the same value is used for parts that turn. |
 | **Red** | **Press fit.** Apply the press-fit clearance for the material in `03_materials_tolerances.md`. |
 
-- A coloured dimension describes how that feature must fit its mating part. Say which side the clearance was applied to (hole made bigger, or peg made smaller).
-- **[Fill out]** Which side gets the clearance by default: the hole, the peg, or split between them?
+- A coloured dimension describes how that feature must fit its mating part. The clearance is applied as defined in `03_materials_tolerances.md` §1: a uniform gap on each mating surface, by offsetting the socket's outline — never by scaling. This works the same for round and non-round features.
+- ✅ **Default side: the hole or socket is made bigger**; the peg stays nominal, unless the drawing or request says otherwise. Say in the report which side was changed.
 - **[Fill out]** Meaning of any other colours (blue, etc.), or "ask if seen".
 
 ## E. Angles ✅

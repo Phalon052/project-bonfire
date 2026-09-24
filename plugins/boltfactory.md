@@ -22,4 +22,4 @@
 ## Known problems and workarounds
 
 - **Pan head too short:** there is no pan-head height option; a #10 head came out 2.36 mm tall (the standard is 3.10–3.38). Workaround: after generating, scale the vertices above the thread length in Z to the right height. Set `bf_Phillips_Bit_Depth` to (wanted depth ÷ that scale factor) first so the recess ends up the right depth.
-- **Printed threads:** nominal threads won't fit when printed; add clearance between the screw and nut.
+- **Printed threads:** nominal threads won't fit when printed. Use `../03_materials_tolerances.md` §3 *Thread* (Overture PLA, measured 2026-09-24: **0.30 per side on the nut**). Build the nut with `bf_Major_Dia` and `bf_Minor_Dia` each + 2 × the value; keep the bolt nominal.

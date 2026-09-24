@@ -17,7 +17,7 @@ This project is for designing 3D-printable parts, mainly in Blender (connected t
 | **Anything is unclear and a question is needed** | `02_drawing_rules.md` → **A01, *Asking for clarification*.** Ask with a boxed image, never with a menu of interpretations of the geometry |
 | A drawing, sketch, whiteboard photo, or photo with a ruler is provided | `02_drawing_rules.md` |
 | A photo of a part on the mat with the four ArUco markers | `tools/photo.py` → `rectify()` first, then measure off the rectified picture (USER_GUIDE *Measuring from photos*) |
-| Anything that has to fit, slide, press, rotate, or thread | `03_materials_tolerances.md` |
+| Anything that has to fit, slide, press, rotate, or thread | `03_materials_tolerances.md` → **§1 first**: what a clearance is (a gap per mating surface, applied by offsetting the socket, never by scaling), which side and which surfaces get it, and the untested cases to flag. Then §3 for the value |
 | Printing: slicer settings, supports, orientation, splitting parts, getting ready to print | `04_bambu_basics.md` |
 | Using a Blender add-on/extension | `plugins/README.md`, then `plugins/<plugin>.md` if one exists |
 | Designing anything that could reuse a known part | Search `catalog/model library/data/projects.csv` first (`paths.py` → `find_projects()`), then read the matching project's `references/specifications.md` |

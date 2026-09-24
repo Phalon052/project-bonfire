@@ -269,12 +269,73 @@ Anything missing or unclear gets asked about in one message before modelling.
 
 | Fit | Overture PLA | PLA Matte | Bambu PLA Basic | PETG Basic | Bambu ABS | Bambu ABS-CF |
 |---|---|---|---|---|---|---|
-| Exact (black) | 0 | — | — | — | — | — |
-| Press (red) | **0.05** ✓ | — | — | — | — | — |
-| Snug | **0.10** ✓ | — | — | — | — | — |
-| Sliding / rotating (green) | **0.20** ✓ | — | — | — | — | — |
+| Exact (black) | 0 |  |  |  |  |  |
+| Press (red) | **0.05** ✓ |  |  |  |  |  |
+| Sliding / rotating (green) | **0.10** ✓ |  |  |  |  |  |
+| Thread (printed bolt + printed nut, on the nut) | **0.30** ✓ |  |  |  |  |  |
+| Gear backlash (total) | **0.20** ✓ |  |  |  |  |  |
 
-✓ = measured on this printer in Overture PLA (tolerance test, 2026-09-24). — = no values yet (Bambu PLA Basic, PLA Matte, PETG Basic, Bambu ABS, Bambu ABS-CF); they get set the first time a plan uses that material. There are only these four fits: ask for "rotating" and you get the slide clearance; "loose" is no longer used.
+✓ = measured on this printer in Overture PLA (tolerance test, 2026-09-24). Blank = never tested; set the first time a plan uses that material. `03_materials_tolerances.md` §5 marks each test *Completed* or *Partial*. There are only these three fits: ask for "rotating" or "loose" and you get the sliding clearance.
+
+**Threads and gears:** the thread value widens the nut's thread (the bolt stays as drawn). Gear backlash is split between the two gears (each gear's teeth 0.10 thinner), with the gears at the exact centre distance and the slide fit on each gear's centre hole.
+
+**When only one side is printed** (a steel pin, a store-bought nut, a wooden dowel), the values above don't carry over: only the printed side has printing error. Those fits have their own rows in `03_materials_tolerances.md` §3, blank until tested. Caliper the bought part and use that size, not the label; wood varies and swells, so measure a few spots.
+
+**How a clearance is applied.** It's a gap on each surface that touches the other part, measured straight out from that surface. On a round hole the diameter grows by twice the value (a 10 mm peg with the slide fit gets a 10.20 mm hole). On any other shape (hex, slot, custom outline) the socket's outline is offset outward by the value on every contact face, never scaled. The hole or socket gets bigger and the peg stays as drawn, unless you say otherwise. The values were measured with a 12 mm vertical peg; small holes, holes printed on their side, gaps between layers, and square inside corners get flagged, since they weren't tested.
+
+## Tolerance tests
+
+Three small prints that check the clearances above on your printer and filament. Run them before relying on a
+material's values, and again for any material whose column is blank. They live in `Project Bonfire/tolerance tests/`.
+
+| File (`tolerance tests/3mf/`) | What's on the plate | What it checks | Time / filament (PLA) |
+|---|---|---|---|
+| `test_1_fit_tolerances_1` | hole bar (holes labelled **Exact** 12.00 / **Press** 12.10 / **Slide** 12.20) + a Ø12 peg | exact, press and sliding / rotating fits | 20 min, 5.8 g |
+| `test_2_threading_tolerances_1` | M12 bolt + three nuts, clearance engraved on a flat: **0.25 / 0.30 / 0.35** | printed thread clearance | 33 min, 8.4 g |
+| `test_3_gear_mesh_1` | peg block (two Ø12 pegs, 40 mm apart) + two identical gears | gear backlash, and gears turning on their pegs | 37 min, 14.4 g |
+| `tolerance_tests_all_1` | all of the above on one plate | everything at once | 1 h 12 min, 28.3 g |
+
+Each has a sliced version (`…_1_1.gcode.3mf`) ready to open in Bambu Studio. The single parts are in
+`tolerance tests/stl/` (the gear prints twice).
+
+**Order: run test 1 before test 3.** The gears sit on their pegs with the *sliding / rotating* fit from test 1.
+If test 1 shows that fit is wrong for the material, it has to be fixed first, or the gear test can't tell a bad
+peg fit from a bad mesh. Test 2 doesn't depend on the others. Use `tolerance_tests_all_1` only when the material
+already has a sliding / rotating value you trust.
+
+**Before printing:** in Bambu Studio, set the AMS slot to the filament being tested (the files come out in PLA
+with Bambu's default colour; pick the slot in the send dialog). Keep **X-Y hole compensation off** so the holes
+print as modelled.
+
+**Running them**
+
+1. **Test 1 — fits.** Fit the peg into each hole of the bar and compare the result with the label:
+   - *Exact* — does not fit, or fits only with force. This is expected.
+   - *Press* — fits with firm hand pressure and holds its position.
+   - *Slide* — moves and rotates freely with minimal play.
+
+   **Account for the seam.** The holes and the peg will likely each have a seam: a thin vertical ridge where
+   each printed layer starts and ends. It adds friction, or catches at one point as the peg rotates, so a fit
+   can seem closer than it really is. The seam wears smooth after the peg has been fitted and rotated a few
+   times. Judge the fit after that, and when reporting, say whether the resistance came from the seam (one
+   point, reducing with use) or from the whole hole. Don't change a default to a larger clearance only to
+   clear a seam.
+
+   Report which holes matched their label.
+2. **Test 2 — threads.** Thread the bolt into each nut by hand. The right value is the **smallest clearance that
+   threads the full length without binding**. Note how far the others thread before binding (e.g. "0.25 binds
+   about a third of the way").
+3. **Test 3 — gears.** Mount one gear on each peg. Check that each gear rotates freely on its peg, then rotate
+   one gear and watch the other: the teeth should mesh smoothly through a full turn, without jamming or
+   noticeable play. Report the peg fit and the gear mesh separately (binding / correct / excess play).
+
+**Recording the results.** Tell Claude the material and what you found. The values go into
+`03_materials_tolerances.md` §5 for that material, dated **(Completed)** when every fit worked or **(Partial)**
+when only some did, and into the table above. If a result is off (the 0.35 nut still binds, say), Claude makes
+a new part at the next value to reprint, not the whole set.
+
+These tests measure **printed parts against printed parts**. Fits against a bought or wooden part are a
+different case (see *When only one side is printed* above) and aren't covered yet.
 
 ## Where files go
 
@@ -299,6 +360,7 @@ Desktop/Project Bonfire/catalog/
 ```
 
 - Claude's previews, renders and screenshots go in the project's `references/` folder. There's no separate outputs folder.
+- The tolerance tests are a standard kit, not a project: `Project Bonfire/tolerance tests/` has `stl/`, `blend/`, `3mf/` and a preview in `references/`, but no `specifications.md` and no monitoring settings. Results are recorded in `03_materials_tolerances.md` §5.
 - Identical parts get one STL; how many to print is the Quantity in `specifications.md` (3 identical pegs → `peg_1.stl`, Quantity 3).
 - All names are lowercase with underscores. `<friend>_` is left off when the project isn't for a friend.
 - In Blender, collections are `prod` (final parts), `mod` (boolean and modifier helpers), `ref` (images), `back` (backups, e.g. `back_lid_0.0.1`) and `temp` (your scratch models).

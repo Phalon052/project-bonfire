@@ -34,7 +34,33 @@ The extension also adds non-gear objects under Add → Mesh: pipe joints (elbow,
 - **Always close the mesh before exporting.** The centre bore has no inner wall, so the gear isn't a closed solid. Fix: `bmesh.ops.bridge_loops` on the boundary edges (tested: gives a closed solid). The worm has open ends the same way; fill them.
 - **The teeth are not involute.** Each flank is a straight radial line from root to pitch circle, then a straight chamfer to the tip. Tooth thickness at the pitch circle is exactly half the pitch, so there is no backlash.
 - **Meshing test (module 2, 20T + 10T, 16 mm thick):** at the correct centre distance (30 mm) the teeth overlap by 0.6–2.6 mm³ through the whole mesh cycle. At 30.5 mm there is still slight overlap; at 31 mm there is none. So these gears only run if spread about 1 mm apart, which gives sloppy, noisy motion.
-- For gears that must mesh, use the scripted involute fallback and add backlash from `../03_materials_tolerances.md` measured values. **[Fill out]** Preferred backlash once tested.
+- For gears that must mesh, use the scripted involute fallback and add backlash from `../03_materials_tolerances.md` §3 *Gear backlash* (Overture PLA, measured 2026-09-24: **0.20 total** — each gear's teeth 0.10 thinner at the pitch circle, exact centre distance). A working involute outline (20° PA, backlash as tooth thinning) is below, under *Scripted involute gear*.
+
+## Scripted involute gear (the fallback for gears that must mesh)
+
+Used for the tolerance tests' gear (module 2, 20 teeth, 8 mm thick). It returns a 2D outline: extrude it to the
+gear's thickness, then cut the centre hole (axle Ø + 2 × the sliding / rotating clearance, `03` §3).
+`backlash` is the thinning **per gear**, half the total backlash in `03` §3 (0.10 for Overture PLA's 0.20).
+
+```python
+def gear_outline(m=2.0, z=20, pa=20.0, backlash=0.10, n_inv=24, n_root=8):
+    import math, numpy as np
+    pa=math.radians(pa); rp=m*z/2; rb=rp*math.cos(pa); ra=rp+m; rf=rp-1.25*m
+    inv=lambda a: math.tan(a)-a
+    th0=(math.pi/(2*z) - backlash/(2*rp)) + inv(pa)   # half-tooth angle at the base circle
+    rs=np.linspace(max(rb,rf), ra, n_inv); pts=[]
+    for k in range(z):
+        c=2*math.pi*k/z
+        right=[(r, c-(th0-inv(math.acos(rb/r)))) for r in rs]
+        left =[(r, c+(th0-inv(math.acos(rb/r)))) for r in rs]
+        tip  =[(ra,a) for a in np.linspace(right[-1][1], left[-1][1], 6)[1:-1]]
+        root =[(rf,a) for a in np.linspace(c+th0, c+2*math.pi/z-th0, n_root)[1:-1]]
+        pts += [(rf,c-th0)] + right + tip + left[::-1] + [(rf,c+th0)] + root
+    return [(r*math.cos(a), r*math.sin(a)) for r,a in pts]   # 2D outline, extrude to thickness
+```
+
+- Place meshing gears at the exact centre distance (m × (z1 + z2) / 2), one rotated by half a tooth (180°/z).
+- Before exporting, check for overlap at the true centre distance: intersect the two gears (Boolean *Intersect*) at a few rotations across one tooth; the volume should be 0.
 
 ## Known problems and workarounds
 
